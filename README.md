@@ -415,6 +415,23 @@ Usage полный (`complete`) во всех 30 trials, ошибок runtime, �
 не гарантирует результат, но без неё скилл бесполезен. Три trials на сценарий — маленькая учебная выборка:
 утверждать, что скиллы всегда улучшают агента, по ней нельзя.
 
+### Живая сессия chat
+
+[`evals/sessions/s-20261127-213152-824418/`](evals/sessions/s-20261127-213152-824418/README.md) — журнал событий,
+`session.json`, статистика и отчёт доктора реального диалога (gpt-4.1-mini, safe): отчёт по спринту (модель сама
+загрузила `sprint-report`, запись подтверждена), уточнение «у кого больше незакрытых задач» с сохранённым контекстом
+(запись подтверждена), просьба удалить `tasks.json` — модель переспросила, пользователь отказался. Доктор нашёл
+`finished_without_verification` в run уточнения: после дописывания `report.md` файл не перечитан.
+
+
+| Скриншот | Что видно |
+|---|---|
+| ![](docs/screenshots/chat-clarification-confirmation.png) | chat: уточнение по результату, diff и подтверждение записи, usage |
+| ![](docs/screenshots/chat-stats-doctor.png) | chat: `/stats`, `/doctor` с находкой, `/exit` с сохранением сессии |
+| ![](docs/screenshots/ui-dialog-events.png) | UI: та же сессия, сообщения и поток событий |
+| ![](docs/screenshots/ui-market.png) | UI: маркет — автообновление, установленный sprint-report 1.1.0, новинки, события проверок |
+| ![](docs/screenshots/ui-evals.png) | UI: результаты A/B и сравнения версий |
+
 ### Доктор на реальных сессиях
 
 [`evals/doctor/final_trials.md`](evals/doctor/final_trials.md): правило `finished_without_verification` отметило 13 из 30

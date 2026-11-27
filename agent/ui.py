@@ -244,11 +244,11 @@ class Controller:
                 "available": available, "events": market.events()[-30:], "updates": self.update_reports(market)}
 
     def update_reports(self, market) -> list:
-        base = market.root / "updates"
         reports = []
-        if base.is_dir():
-            for path in sorted(base.glob("*/decision.json")):
-                reports.append(json.loads(path.read_text(encoding="utf-8")))
+        for base in (market.root / "updates", Path("evals/results")):
+            if base.is_dir():
+                for path in sorted(base.glob("*/decision.json")):
+                    reports.append(json.loads(path.read_text(encoding="utf-8")))
         return reports
 
     def job(self, name: str, work) -> str:
