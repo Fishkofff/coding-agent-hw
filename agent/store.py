@@ -16,6 +16,7 @@ except ImportError:
     fcntl = None
 
 RUN_ID_RE = re.compile(r"^\d{8}-\d{6}-[0-9a-f]{6}$")
+SESSION_ID_RE = re.compile(r"^s-\d{8}-\d{6}-[0-9a-f]{6}$")
 
 
 class RunNotFound(Exception):
@@ -76,10 +77,49 @@ class RunStore:
     def read_snapshot(self, run_id: str, name: str) -> dict:
         return json.loads((self.run_dir(run_id) / "snapshots" / f"{name}.json").read_text(encoding="utf-8"))
 
-    def append_event(self, run_id: str, event_name: str, **data) -> None:
-        line = json.dumps({"at": now_iso(), "event": event_name, **data}, ensure_ascii=False, default=str)
-        with open(self.run_dir(run_id) / "events.jsonl", "a", encoding="utf-8") as fh:
-            fh.write(line + "\n")
+    def append_event(self, record: dict) -> None:
+        line = json.dumps(record, ensure_ascii=False, default=str) + "\n"
+        if record.get("run_id"):
+            with open(self.run_dir(record["run_id"]) / "events.jsonl", "a", encoding="utf-8") as fh:
+                fh.write(line)
+        if record.get("session_id"):
+            path = self.session_dir(record["session_id"]) / "events.jsonl"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write(line)
+
+    def session_dir(self, session_id: str) -> Path:
+        if not isinstance(session_id, str) or not SESSION_ID_RE.match(session_id):
+            raise RunNotFound(f"invalid session_id {session_id!r}")
+        return self.root / "sessions" / session_id
+
+    def new_session(self) -> dict:
+        session_id = "s-" + self.new_run_id()
+        session = {"session_id": session_id, "created_at": now_iso(), "runs": [], "history": None}
+        self.session_dir(session_id).mkdir(parents=True, exist_ok=False)
+        self.save_session(session)
+        return session
+
+    def save_session(self, session: dict) -> None:
+        atomic_write_json(self.session_dir(session["session_id"]) / "session.json", session)
+
+    def load_session(self, session_id: str) -> dict:
+        path = self.session_dir(session_id) / "session.json"
+        if not path.exists():
+            raise RunNotFound(f"session {session_id} not found in {self.root}")
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def list_sessions(self) -> list[dict]:
+        base = self.root / "sessions"
+        if not base.exists():
+            return []
+        return [self.load_session(d.name) for d in sorted(base.iterdir()) if (d / "session.json").exists()]
+
+    def session_events(self, session_id: str) -> list[dict]:
+        path = self.session_dir(session_id) / "events.jsonl"
+        if not path.exists():
+            return []
+        return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
     @contextmanager
     def lock(self, run_id: str):

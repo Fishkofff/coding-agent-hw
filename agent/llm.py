@@ -31,11 +31,14 @@ class ModelResponse:
 
 class OpenAICompatibleModel:
     def __init__(self, base_url: str, api_key: str, model: str, *, timeout: float = 300.0,
-                 temperature: float = 0.0, max_retries: int = 2):
+                 temperature: float = 0.0, max_retries: int = 2, no_think: bool = False):
         self.base_url, self.api_key, self.model = base_url, api_key or "none", model
         self.timeout, self.temperature, self.max_retries = timeout, temperature, max_retries
+        self.no_think = no_think
 
     def complete(self, messages: list[dict], tools: list[dict]) -> ModelResponse:
+        if self.no_think and messages and messages[0].get("role") == "system":
+            messages = [dict(messages[0], content=messages[0]["content"] + "\n/no_think")] + messages[1:]
         body = {"model": self.model, "messages": messages, "temperature": self.temperature}
         if tools:
             body["tools"] = tools
@@ -114,4 +117,4 @@ def _step_from_json(step: dict) -> ModelResponse:
         if not isinstance(arguments, str):
             arguments = json.dumps(arguments, ensure_ascii=False)
         calls.append(ToolCallRequest(id=raw.get("id", ""), name=raw["name"], arguments=arguments))
-    return ModelResponse(content=step.get("content", ""), tool_calls=calls)
+    return ModelResponse(content=step.get("content", ""), tool_calls=calls, usage=step.get("usage"))

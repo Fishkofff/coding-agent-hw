@@ -1,0 +1,5 @@
+{"steps": [
+ {"tool_calls": [{"id": "a1", "name": "mcp__tracker__list_tasks", "arguments": {"status": "open"}}]},
+ {"tool_calls": [{"id": "a2", "name": "write_file", "arguments": {"path": "open-tasks.json", "content": "[\"T1\", \"T4\", \"T7\"]"}}]},
+ {"content": "Сохранил 3 открытые задачи."}
+]}

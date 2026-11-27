@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass
 from fnmatch import fnmatch
 from pathlib import Path
@@ -45,6 +46,39 @@ _RULES = {
     "required": ["allow", "deny"],
     "additionalProperties": False,
 }
+MCP_EFFECTS = ("read", "write", "delete", "exec")
+MCP_SERVER_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "description": {"type": "string"},
+        "enabled": {"type": "boolean"},
+        "command": {"type": "string", "minLength": 1},
+        "args": _STR_LIST,
+        "cwd": {"type": "string", "minLength": 1},
+        "env": {"type": "object", "additionalProperties": {"type": "string"}},
+        "timeout_sec": {"type": "number", "minimum": 0.1, "maximum": 600},
+        "max_result_bytes": {"type": "integer", "minimum": 1},
+        "tools": _RULES,
+        "effects": {"type": "object", "additionalProperties": {"type": "string", "enum": list(MCP_EFFECTS)}},
+    },
+    "required": ["command", "tools"],
+    "additionalProperties": False,
+}
+MARKET_SOURCE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "description": {"type": "string"},
+        "index": {"type": "string", "minLength": 1},
+        "check": {"type": "boolean"},
+        "auto_update": {"type": "boolean"},
+        "verify_updates": {"type": "boolean"},
+        "interval_minutes": {"type": "number", "minimum": 0},
+    },
+    "required": ["index"],
+    "additionalProperties": False,
+}
+MCP_SERVER_NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+
 POLICY_SCHEMA = {
     "type": "object",
     "properties": {
@@ -75,6 +109,26 @@ POLICY_SCHEMA = {
             "properties": {key: {"type": "integer", "minimum": 0} for key in BUDGET_KEYS},
             "additionalProperties": False,
         },
+        "skills": {
+            "type": "object",
+            "properties": {"dirs": _STR_LIST, "disabled": _STR_LIST},
+            "additionalProperties": False,
+        },
+        "mcp": {
+            "type": "object",
+            "properties": {"servers": {"type": "object", "additionalProperties": MCP_SERVER_SCHEMA}},
+            "additionalProperties": False,
+        },
+        "market": {
+            "type": "object",
+            "properties": {
+                "install_dir": {"type": "string", "minLength": 1},
+                "agent_install": {"type": "boolean"},
+                "sources": {"type": "object", "additionalProperties": MARKET_SOURCE_SCHEMA},
+            },
+            "required": ["install_dir", "sources"],
+            "additionalProperties": False,
+        },
     },
     "required": ["workspace", "commands", "directories"],
     "additionalProperties": False,
@@ -96,6 +150,13 @@ class Policy:
     max_write_bytes: int
     journal_exclude: tuple
     budget: dict
+    skills_dirs: tuple = ()
+    skills_disabled: tuple = ()
+    mcp_servers: tuple = ()
+    market: dict | None = None
+
+    def mcp_server(self, name: str) -> dict | None:
+        return next((server for server in self.mcp_servers if server["name"] == name), None)
 
     def is_denied(self, path: Path) -> bool:
         return any(is_within(path, d) for d in self.deny_dirs)
@@ -163,6 +224,23 @@ def load_policy(path) -> Policy:
     for pattern in exclude:
         _check_exclude_pattern(pattern, workspace)
 
+    skills = data.get("skills", {})
+    skills_dirs = tuple(canonical(root, d) for d in skills.get("dirs", []))
+    for directory in skills_dirs:
+        if is_within(directory, workspace):
+            raise PolicyError(f"skills directory {directory} must be outside the workspace")
+    mcp_servers = tuple(_load_mcp_server(root, name, server)
+                        for name, server in sorted(data.get("mcp", {}).get("servers", {}).items()))
+    market = None
+    if "market" in data:
+        install_dir = canonical(root, data["market"]["install_dir"])
+        if is_within(install_dir, workspace):
+            raise PolicyError("market.install_dir must be outside the workspace")
+        if install_dir not in skills_dirs:
+            skills_dirs = skills_dirs + (install_dir,)
+        market = {"install_dir": str(install_dir), "agent_install": data["market"].get("agent_install", False),
+                  "sources": data["market"]["sources"]}
+
     bash = data.get("bash", {})
     files = data.get("files", {})
     return Policy(
@@ -179,7 +257,36 @@ def load_policy(path) -> Policy:
         max_write_bytes=int(files.get("max_write_bytes", 200_000)),
         journal_exclude=exclude,
         budget={**DEFAULT_LIMITS, **data.get("budget", {})},
+        skills_dirs=skills_dirs,
+        skills_disabled=tuple(skills.get("disabled", [])),
+        mcp_servers=mcp_servers,
+        market=market,
     )
+
+
+def _load_mcp_server(root: Path, name: str, server: dict) -> dict:
+    if not MCP_SERVER_NAME_RE.match(name):
+        raise PolicyError(f"MCP server name {name!r} must use lowercase letters, digits and single hyphens")
+    for tool in server["tools"]["allow"] + server["tools"]["deny"]:
+        if not re.match(r"^[A-Za-z0-9_.-]+$", tool):
+            raise PolicyError(f"MCP server {name}: bad tool name {tool!r} in tools.allow/deny")
+    return {
+        "name": name,
+        "enabled": server.get("enabled", True),
+        "command": server["command"],
+        "args": list(server.get("args", [])),
+        "cwd": str(canonical(root, server.get("cwd", "."))),
+        "env": dict(server.get("env", {})),
+        "timeout_sec": float(server.get("timeout_sec", 15)),
+        "max_result_bytes": int(server.get("max_result_bytes", 50_000)),
+        "allow": tuple(server["tools"]["allow"]),
+        "deny": tuple(server["tools"]["deny"]),
+        "effects": dict(server.get("effects", {})),
+    }
+
+
+def mcp_effect(server: dict, tool: str) -> str:
+    return server["effects"].get(tool, "write")
 
 
 def _check_exclude_pattern(pattern: str, workspace: Path) -> None:
@@ -281,6 +388,20 @@ class PolicyEngine:
             if "/" in value:
                 self.resolve_path(policy, os.path.relpath(os.path.join(cwd_path, value), policy.workspace))
         return tokens, cwd_path
+
+    def check_mcp(self, policy: Policy, server_name: str, tool: str, args: dict) -> None:
+        server = policy.mcp_server(server_name)
+        if server is None:
+            raise PolicyViolation(f"MCP server {server_name!r} is not configured in the policy")
+        if not server["enabled"]:
+            raise PolicyViolation(f"MCP server {server_name!r} is disabled in the policy")
+        if tool in server["deny"]:
+            raise PolicyViolation(f"MCP tool {server_name}/{tool} is denied by the policy")
+        if tool not in server["allow"]:
+            raise PolicyViolation(f"MCP tool {server_name}/{tool} is not in the allowlist (everything not explicitly allowed is denied)")
+        size = utf8_len(json.dumps(args, ensure_ascii=False))
+        if size > policy.max_write_bytes:
+            raise PolicyViolation(f"MCP arguments are {size} bytes, limit is {policy.max_write_bytes}")
 
     def check_call(self, policy: Policy, tool: str, args: dict) -> CheckedCall:
         if tool == "Bash":

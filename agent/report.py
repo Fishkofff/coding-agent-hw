@@ -5,6 +5,7 @@ import sys
 
 from agent.budget import Budget
 from agent.plan import describe_check, render_checklist
+from agent.usage import describe as describe_usage
 
 CLI = "python3 -m agent"
 
@@ -52,6 +53,11 @@ def summarize_result(record: dict) -> str:
         return f"<- wrote {result.get('bytes_written')} bytes" + (" (new file)" if result.get("created") else "")
     if name == "delete_file":
         return "<- deleted" if result.get("deleted") else "<- file was already absent"
+    if name == "load_skill":
+        return f"<- skill {result.get('skill')} loaded ({len(result.get('instructions') or '')} chars)"
+    if result.get("server"):
+        content = result.get("content") or ""
+        return f"<- ok ({len(content)} chars" + (", truncated)" if result.get("truncated") else ")")
     if name == "complete_task":
         return f"<- task {result.get('task_id')} verified by the runtime"
     if name == "submit_plan":
@@ -87,22 +93,39 @@ def format_changes(changes: list[dict], with_diff: bool = True) -> str:
 
 
 class Reporter:
-    def __init__(self, stream=None):
+    def __init__(self, stream=None, hints: bool = True):
         self.stream = stream if stream is not None else sys.stdout
+        self.hints = hints
 
     def line(self, text: str = "") -> None:
         print(text, file=self.stream, flush=True)
 
     def run_started(self, state: dict) -> None:
-        self.line(f"run_id: {state['run_id']}  (mode: {state['mode']}, plan mode: {'on' if state['plan_mode'] else 'off'})")
+        skills = state.get("skills") or {}
+        mode = "on" if skills.get("enabled") else "off"
+        self.line(f"run_id: {state['run_id']}  session: {state.get('session_id')}  (mode: {state['mode']}, "
+                  f"plan mode: {'on' if state['plan_mode'] else 'off'}, skills: {mode})")
+        if skills.get("enabled"):
+            self.line(f"[skills] Найдено скиллов: {len(skills['catalog'])}"
+                      + (f" ({', '.join(s['name'] for s in skills['catalog'])})" if skills["catalog"] else ""))
+            for problem in skills.get("errors", []):
+                self.line(f"[skills] ОШИБКА {problem['path']}: {problem['error']}")
+        mcp = state.get("mcp") or {}
+        for server in mcp.get("servers", []):
+            self.line(f"[mcp] Подключён сервер {server['server']}: инструменты {', '.join(server['tools']) or '-'}")
+        for problem in mcp.get("errors", []):
+            self.line(f"[mcp] ОШИБКА сервера {problem['server']}: {problem['error']}")
 
     def assistant(self, text: str) -> None:
         if text and text.strip():
             self.line("model: " + shorten(text.strip(), 1500))
 
-    def tool_call(self, record: dict) -> None:
+    def tool_call(self, record: dict, spec=None) -> None:
         where = f" [task {record['task_id']}]" if record.get("task_id") else (" [planning]" if record["phase"] == "planning" else "")
-        self.line(f"-> {record['name']}({format_args(record)}){where}  id={record['id']}")
+        if spec is not None and spec.kind == "mcp":
+            self.line(f"[mcp {spec.server}] -> {spec.remote}({format_args(record)}){where}  id={record['id']}")
+        else:
+            self.line(f"[tool] -> {record['name']}({format_args(record)}){where}  id={record['id']}")
 
     def tool_outcome(self, record: dict) -> None:
         self.line("   " + summarize_result(record))
@@ -121,7 +144,7 @@ class Reporter:
         self.line(f"\n=== run {run_id}: {title} ===")
         if details:
             self.line(details)
-        if status == "waiting":
+        if status == "waiting" and self.hints:
             kind = pending["kind"]
             if kind == "confirmation":
                 self.line(f"Разрешить:  {CLI} approve {run_id}")
@@ -145,3 +168,5 @@ class Reporter:
             self.line(f"Ошибка: {error.get('code')}: {error.get('message')}")
             self.line(f"Изменения: {CLI} diff {run_id}    Откат: {CLI} rollback {run_id}")
         self.line("Бюджет: " + Budget(state["budget"]).summary())
+        if state.get("usage"):
+            self.line("[usage] " + describe_usage(state["usage"]))

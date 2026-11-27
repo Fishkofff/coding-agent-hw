@@ -1,0 +1,46 @@
+{
+  "market": "study-market",
+  "revision": "v2",
+  "skills": [
+    {
+      "name": "sprint-report",
+      "version": "1.1.0",
+      "description": "Отчёт о состоянии спринта: статусы, просрочки, неполные данные.",
+      "path": "packages/sprint-report/1.1.0",
+      "files": [
+        "SKILL.md"
+      ],
+      "sha256": "0a3780872a7b116b13c9471f82b324e12ad3c9d6a142c7569ea8a4e630df5aaa"
+    },
+    {
+      "name": "workload-summary",
+      "version": "1.0.0",
+      "description": "Нагрузка исполнителей по учебному трекеру: сколько незакрытых задач у каждого.",
+      "path": "packages/workload-summary/1.0.0",
+      "files": [
+        "SKILL.md"
+      ],
+      "sha256": "9bbd4efa26d6f3b8f7d4ff1862c01cb076dee55f357e78dbf88b4b05f86444e8"
+    },
+    {
+      "name": "standup-notes",
+      "version": "1.0.0",
+      "description": "Заметки к ежедневному стендапу по трекеру: в работе, просрочено.",
+      "path": "packages/standup-notes/1.0.0",
+      "files": [
+        "SKILL.md"
+      ],
+      "sha256": "55ce3d097f88cd0a31c6e704b06fdfae2cdc8bf230eded473d5fb0bf84a6b9db"
+    },
+    {
+      "name": "broken-example",
+      "version": "1.0.0",
+      "description": "Пакет с неверным хешем для проверки отказа установки.",
+      "path": "packages/broken-example/1.0.0",
+      "files": [
+        "SKILL.md"
+      ],
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ]
+}

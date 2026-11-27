@@ -7,7 +7,7 @@ _MODE_NOTES = {
     "auto": "file writes and Bash run immediately if the policy allows them; deletions need user confirmation.",
 }
 
-SYSTEM_TEMPLATE = """You are a careful coding agent. You change a small project located in the workspace directory.
+SYSTEM_TEMPLATE = """You are a careful agent. You work with a small project in the workspace directory: code, data files and reports.
 The runtime executes your tool calls only after its own checks: JSON schema, security policy, execution mode and budget.
 
 Paths are always relative to the workspace root, e.g. "order.py"; "." is the root. Absolute paths, ".." and symlinks are rejected.
@@ -25,10 +25,19 @@ Rules:
 - If a tool call is rejected or denied, read the reason and choose a different action. Never repeat the same rejected call.
 - Do not modify test files unless the user explicitly asks you to.
 - After changing code, run the tests with Bash and check exit_code.
+- Tools whose names start with mcp__<server>__ are provided by external MCP servers. If such a tool fails, report the failure honestly and never invent the missing data.
 - You may call several independent tools in one response.
 - When the work is finished, reply with a short final summary for the user and NO tool calls.
 
-Execution mode: {mode}: {mode_note}"""
+Execution mode: {mode}: {mode_note}{skills}"""
+
+SKILLS_TEMPLATE = """
+
+Skills: a skill is a set of instructions for a particular type of work. Only names and descriptions are listed here.
+If the user's task matches a skill description, call load_skill with its name BEFORE doing the work and follow the loaded instructions.
+If no skill matches, work without a skill. Never load a skill that does not match the task.
+Available skills:
+{catalog}"""
 
 PLAN_MODE_NOTE = """[runtime] PLAN MODE is active.
 Until the user approves a plan you may use only list_files, read_file and submit_plan. File changes, deletions and Bash are blocked.
@@ -43,9 +52,13 @@ Every step becomes a task. The runtime marks a task as done ONLY after it verifi
 After submit_plan, the user approves or rejects the plan."""
 
 
-def system_prompt(policy, mode: str) -> str:
+def system_prompt(policy, mode: str, skills: list | None = None) -> str:
     commands = "\n".join(f"  - {' '.join(tokens)}" for tokens in policy.allow_commands) or "  (none)"
-    return SYSTEM_TEMPLATE.format(commands=commands, mode=mode, mode_note=_MODE_NOTES[mode])
+    section = ""
+    if skills is not None:
+        catalog = "\n".join(f"- {s['name']}: {s['description']}" for s in skills) or "(no skills installed)"
+        section = SKILLS_TEMPLATE.format(catalog=catalog)
+    return SYSTEM_TEMPLATE.format(commands=commands, mode=mode, mode_note=_MODE_NOTES[mode], skills=section)
 
 
 def initial_user_message(task: str, plan_mode: bool) -> str:

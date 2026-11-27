@@ -76,3 +76,9 @@ def truncate_text(text: str, max_bytes: int) -> tuple[str, bool]:
     marker = f"\n...[truncated {len(raw) - keep} bytes]...\n"
     tail_part = raw[len(raw) - tail:] if tail else b""
     return raw[:head].decode("utf-8", "ignore") + marker + tail_part.decode("utf-8", "ignore"), True
+
+
+def new_event(event_type: str, session_id, run_id, data: dict) -> dict:
+    import secrets
+    return {"id": "ev-" + secrets.token_hex(6), "time": now_iso(), "session_id": session_id, "run_id": run_id,
+            "type": event_type, "data": data}

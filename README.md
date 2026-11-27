@@ -1,150 +1,401 @@
-# Coding agent с tool calling
+# Coding agent: Skills, MCP и оценка качества (ДЗ № 2)
 
-Консольный агент получает задачу на изменение небольшого проекта, сам выбирает инструменты,
-читает и меняет файлы, запускает тесты и решает, когда закончить работу. Модель только
-**предлагает** действия. Решение принимает runtime: схема → policy → режим → бюджет → журнал → исполнение.
+Продолжение агента из ДЗ № 1 (ветка `main`). Это та же runtime-машина состояний: модель только **предлагает**
+tool calls, а runtime проверяет схему, policy, режим и бюджет, ведёт журнал и исполняет. В ДЗ № 2 добавлены:
+подключаемые скиллы, MCP, журнал событий и статистика, доктор сессий, автоматические A/B-evals, маркет скиллов
+с автообновлением и проверка обновления через eval с откатом.
 
-Реализованы все уровни задания, до 10 баллов:
+**Заявленный уровень: 10.**
 
 | Уровень | Что сделано | Где в коде |
 |---|---|---|
-| Блок 1 | agent loop, несколько tool calls в одном ответе, ошибки инструментов, `Bash` с таймаутом и лимитом вывода | `agent/runtime.py`, `agent/tools.py` |
-| Блок 2 | policy-файл (команды и директории allow/deny), режимы `safe`/`auto`, подтверждения со стоп-и-продолжить | `agent/policy.py`, `policy.json` |
-| Блок 3 | `run_id`, состояние на диске, «началось/завершилось», неопределённые вызовы, повтор `tool_call_id` | `agent/runtime.py`, `agent/store.py`, `agent/faults.py` |
-| Блок 4 | Plan Mode: структурированный план, утверждение и отклонение | `agent/plan.py`, `agent/runtime.py` |
-| 8 баллов | единый бюджет: запросы к модели, tool calls, побочные эффекты, байты результатов | `agent/budget.py` |
-| 9 баллов | шаги плана становятся задачами с зависимостями; результат задачи проверяет runtime | `agent/plan.py` |
-| 10 баллов | журнал изменений со снимками и хешами, diff, безопасный откат по `run_id` | `agent/journal.py` |
+| 4 | интерактивный `chat`, скиллы (каталог → `load_skill`), журнал событий JSONL, статистика, usage токенов, A/B eval | `agent/skills.py`, `agent/cli.py`, `agent/stats.py`, `agent/usage.py`, `agent/evals.py` |
+| 5 | MCP-клиент по stdio (JSON-RPC, `initialize`, `tools/list`, `tools/call`), свой MCP-сервер трекера, ограничения сервера в policy | `agent/mcp.py`, `mcp_servers/tracker_server.py` |
+| 6 | доктор сессий: расходы, частоты, 4 правила находок | `agent/doctor.py` |
+| 7 | `eval run` одной командой: 5 сценариев × A/B × 3 trials = 30 запусков, возобновление, сводка со ссылками на журналы | `agent/evals.py`, `evals/` |
+| 8 | маркет: поиск, установка через runtime, проверка по интервалу, новинки, автообновление, sha256 | `agent/market.py`, `market/` |
+| 9 | кандидат обновления → eval old/new (30 запусков) → автоматическое решение → откат | `agent/update_check.py` |
+| 10 | локальный веб-интерфейс поверх того же runtime: диалог, события, подтверждения, настройки, маркет, доктор, evals | `agent/ui.py`, `agent/ui_static/index.html` |
 
-Агент написан на Python 3.10+ и использует только стандартную библиотеку, без агентских фреймворков.
-HTTP-клиент к OpenAI-compatible Chat Completions API (`agent/llm.py`) написан на `urllib`.
+Агент написан на Python 3.10+ и использует только стандартную библиотеку: MCP-клиент и сервер, HTTP-клиент к LLM и
+валидатор схем реализованы вручную. Агентских фреймворков и SDK нет.
 
 ---
 
-## Установка
-
-Нужны Python ≥ 3.10 и Bash (macOS/Linux; на Windows — WSL).
+## Установка и модель
 
 ```bash
-git clone <URL этого репозитория> && cd <папка>
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt        # внешних зависимостей нет; pytest — по желанию: requirements-dev.txt
-cp .env.example .env                   # и вписать свои OPENAI_BASE_URL / OPENAI_API_KEY / OPENAI_MODEL
+git clone <URL репозитория> && cd <папка> && git checkout hw2
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt          # внешних зависимостей нет
+cp .env.example .env                     # OPENAI_BASE_URL / OPENAI_API_KEY / OPENAI_MODEL
 ```
 
-`.env` подхватывается автоматически, если запускать команды из корня проекта; уже заданные переменные окружения он не перезаписывает.
-
-### Модель
-
-Подходит любой OpenAI-compatible API с tool calling. Запасной вариант — локальная Ollama:
+Модель — любой OpenAI-compatible Chat Completions API с tool calling. В экспериментах использовалась локальная
+**Ollama `qwen3:4b`**, `temperature=0`:
 
 ```bash
-ollama pull qwen3:4b
-ollama serve
-export OPENAI_BASE_URL=http://localhost:11434/v1/
-export OPENAI_API_KEY=ollama
-export OPENAI_MODEL=qwen3:4b
+ollama pull qwen3:4b && ollama serve
+export OPENAI_BASE_URL=http://localhost:11434/v1/ OPENAI_API_KEY=ollama OPENAI_MODEL=qwen3:4b
+# необязательно: OPENAI_NO_THINK=1 — добавить /no_think в системный промпт (qwen3 быстрее отвечает)
 ```
 
-Без модели работают демо-сценарии `--scripted demo/*.json`: это детерминированная «модель»,
-которая по очереди отдаёт заранее записанные ответы. Через неё удобно показать всю механику runtime на защите.
+Ключ не логируется: в журнал попадают только `base_url`, имя модели и параметры. Процессам `Bash` и MCP-серверов
+передаётся минимальное окружение без `OPENAI_API_KEY`.
 
-### IntelliJ IDEA
+## Область и данные
 
-1. `File → Open…` → папка проекта.
-2. Плагин **Python** (Ultimate) или **Python Community Edition**: `Settings → Plugins`.
-3. `File → Project Structure → SDK → Add SDK → Python SDK → Virtualenv` (Python 3.10+). Выберите созданный `.venv` или создайте новый.
-4. Команды ниже можно запускать во встроенном терминале IDEA (`View → Tool Windows → Terminal`) из корня проекта.
-5. Тесты из интерфейса: правый клик по папке `tests` → `Run 'Python tests in tests'`.
+Учебный трекер задач команды: задачи `T1..T9` со статусами `open`, `in_progress`, `closed`, исполнителем и сроком.
+
+* `workspace/tasks.json`, `workspace/sprint.json` — локальные данные для отчётов;
+* `data/tracker.json` — данные MCP-сервера трекера (вне workspace: агент видит их только через MCP);
+* `workspace/order.py`, `workspace/test_order.py` — контрольная задача ДЗ № 1 (сценарий без подходящего скилла).
 
 ---
 
-## Структура
-
-```
-policy.json            policy: команды, директории, лимиты Bash, исключения журнала, бюджет (вне workspace)
-workspace/             контрольный проект (order.py, test_order.py) — единственная зона работы агента
-agent/
-  runtime.py           agent loop как восстанавливаемая машина состояний; решения пользователя
-  policy.py            policy-файл и все проверки безопасности (отдельно от цикла)
-  tools.py             описания инструментов (JSON Schema) и исполнитель; Bash-раннер
-  budget.py            единый бюджет запуска и усечение результатов
-  plan.py              схема плана, проверка плана, задачи, проверка результата задач, чеклист
-  journal.py           снимки дерева, diff, хеши, откат
-  store.py             хранилище .agent_runs/<run_id>/ (атомарная запись, блокировка)
-  llm.py               OpenAI-compatible клиент и ScriptedModel
-  faults.py            управляемые точки отказа
-  jsonschema.py        минимальный валидатор JSON Schema
-  prompts.py           тексты для модели
-  report.py, cli.py    вывод и CLI
-demo/                  сценарии ScriptedModel для демо без LLM
-tests/                 автоматические тесты (64 шт.)
-```
-
----
-
-## Инструменты
-
-| Инструмент | Аргументы | Класс | Plan Mode | `safe` | `auto` | Повтор после сбоя |
-|---|---|---|---|---|---|---|
-| `Bash` | `command`, `cwd` | exec | запрещён | подтверждение | сразу | **нет** |
-| `list_files` | `path` | read | да | сразу | сразу | да (без побочных эффектов) |
-| `read_file` | `path` | read | да | сразу | сразу | да (без побочных эффектов) |
-| `write_file` | `path`, `content` | write | запрещён | подтверждение | сразу | да (идемпотентен) |
-| `delete_file` | `path` | delete | запрещён | подтверждение | подтверждение | да (идемпотентен) |
-| `submit_plan` | структура плана | control | только здесь | сразу | сразу | — |
-| `complete_task` | `task_id`, `summary` | control | нет | сразу | сразу | — |
-
-Каждый инструмент передаётся модели с именем, описанием и JSON Schema аргументов (`ToolSpec.to_openai()`).
-Результат возвращается сообщением `role: tool` с исходным `tool_call_id`. Ошибка инструмента не роняет процесс:
-модель получает `{"ok": false, "error": "...", "message": "..."}` и выбирает следующий шаг.
-
-**Почему так решено с повтором.** `write_file` пишет полный content, поэтому повтор даёт то же итоговое состояние.
-`delete_file` при отсутствующем файле отвечает «уже нет», и итог тоже одинаковый. Чтение побочных эффектов не имеет.
-`Bash` не повторяется: произвольная команда может быть неидемпотентной (дописать в файл, сходить в сеть).
-
----
-
-## Запуск агента
+## Интерактивный режим (основной)
 
 ```bash
-# Plan Mode + safe (по умолчанию)
-python3 -m agent run "Исправь расчёт итоговой стоимости заказа, чтобы тесты проходили. Тесты не меняй. Сам найди нужные файлы, внеси исправление и запусти тесты."
-
-# без плана, auto-режим
-python3 -m agent run "…" --mode auto --no-plan
-
-# подтверждать прямо в консоли (состояние всё равно сохраняется перед вопросом)
-python3 -m agent run "…" -i
-
-# детерминированное демо без LLM
-python3 -m agent run "Исправь расчёт" --mode auto --no-plan --scripted demo/scripted_no_plan.json
-python3 -m agent run "Исправь расчёт" --scripted demo/scripted_plan.json
+python3 -m agent chat                       # safe-режим, скиллы и MCP включены
+python3 -m agent chat --mode auto           # запись и Bash без подтверждений (удаление всё равно спрашивает)
+python3 -m agent chat --no-skills           # версия A
+python3 -m agent chat --session <session_id> # продолжить сохранённую сессию после перезапуска
 ```
 
-Команда печатает `run_id`. Все остальные команды работают с ним:
+После каждого ответа агент ждёт следующего сообщения. Контекст сессии (история сообщений, включая tool calls и
+результаты) переносится в следующий run. Каждое сообщение — отдельный run со своим `run_id` внутри одной сессии.
+Подтверждения и отказы работают как в ДЗ № 1: `Разрешить действие? [y/N]`, причину отказа получает модель.
 
-| Команда | Что делает |
+Команды чата: `/stats`, `/skills`, `/mcp`, `/doctor`, `/market`, `/market check`, `/install <источник> <скилл>`,
+`/rollback-skill <скилл>`, `/help`, `/exit`.
+
+Пример: задача и уточнение по результату.
+
+```
+Вы: Выгрузи из трекера все открытые задачи в open-tasks.json
+[skills] Найдено скиллов: 3 (commit-message, open-tasks-export, sprint-report)
+[mcp] Подключён сервер tracker: инструменты list_tasks, get_task, update_task_status
+[tool] -> load_skill(name="open-tasks-export")
+[skills] Загружен скилл: open-tasks-export
+[mcp tracker] -> list_tasks()
+[tool] -> write_file(path="open-tasks.json", ...)      Разрешить действие? [y/N]: y
+[tool] -> read_file(path="open-tasks.json")
+[usage] Запросов к модели: 5; input tokens: ...; output tokens: ...
+Агент: Сохранил 5 незакрытых задач: T1, T3, T4, T6, T7.
+
+Вы: А какие из них сейчас в работе?
+[mcp tracker] -> get_task(id="T3") ...
+Агент: В работе T3 и T6 ...
+```
+
+Без LLM тот же диалог можно показать детерминированно:
+`python3 -m agent chat --scripted demo/scripted_chat.json`.
+
+Неинтерактивный режим тоже есть (`python3 -m agent run "<задача>" [--no-skills] [--mode auto] [--no-plan]`), его использует eval.
+
+---
+
+## Skills
+
+Скилл — это папка с `SKILL.md` в формате Agent Skills: frontmatter `name`, `description` (обязательные), а также
+`license`, `compatibility`, `metadata`, `allowed-tools`, после него шаги.
+
+| Скилл | Назначение | Происхождение |
+|---|---|---|
+| `skills/open-tasks-export` | выгрузка ID незакрытых задач трекера в JSON, честный отказ при сбое источника | написан сам |
+| `skills_installed/sprint-report` | отчёт по спринту: статусы, просрочки, неполные данные | написан сам, установлен из маркета (v1.0.0) |
+| `skills/commit-message` | сообщения коммитов по Conventional Commits — **неподходящий** для всех сценариев | адаптирован |
+
+Как это работает (`agent/skills.py`, `agent/runtime.py`):
+
+1. При старте каждого run runtime сканирует `skills.dirs` из policy (плюс `market.install_dir`), валидирует каждый `SKILL.md`
+   и кладёт в системный промпт **только имена и описания**.
+2. Модель сама решает по задаче, вызвать ли `load_skill(name)`. Только тогда она получает полный текст скилла.
+   Выбор не зашит в код, и пользователь не называет скилл.
+3. Новая папка со скиллом подхватывается следующим run без правки кода.
+4. Некорректный `SKILL.md` (нет frontmatter, нет `description`, имя не совпадает с папкой, неверный формат имени,
+   незакрытый frontmatter) даёт событие `skill_invalid` и строку `[skills] ОШИБКА ...`. Остальные скиллы загружаются.
+5. Каталог скиллов фиксируется в состоянии run. Начатый run сохраняет свои версии, даже если файл на диске поменялся.
+6. Скилл не меняет разрешения: `load_skill` — это инструмент чтения, а все действия проходят ту же policy и подтверждения.
+
+Версия A (`--no-skills`): в промпте нет каталога, у модели нет `load_skill`, загрузчик не вызывается.
+
+---
+
+## MCP
+
+Свой сервер `mcp_servers/tracker_server.py` (stdio, JSON-RPC 2.0, протокол `2025-06-18`) отдаёт инструменты
+`list_tasks(status?, assignee?)`, `get_task(id)` и `update_task_status(id, status)`. Клиент `agent/mcp.py`:
+
+* запускает сервер командой из конфигурации и выполняет `initialize` → `notifications/initialized` → `tools/list` (с пагинацией `nextCursor`);
+* передаёт модели описания и `inputSchema` каждого инструмента под именем `mcp__<server>__<tool>`;
+* перед вызовом runtime проверяет аргументы по `inputSchema`, затем policy сервера; вызов идёт через `tools/call`, результат
+  (`content` text, `structuredContent`, `isError`) возвращается модели сообщением `role: tool`;
+* отвечает на `ping` от сервера, на остальные запросы сервера возвращает `-32601`;
+* обрабатывает таймаут (`mcp_timeout`), JSON-RPC-ошибку и падение процесса (`mcp_error`), `isError` (`mcp_tool_error`).
+  После сбоя соединение пересоздаётся при следующем вызове. Если сервер не стартовал, run продолжается без его инструментов.
+
+Подключение — только конфигурацией в `policy.json → mcp.servers`, agent loop не меняется:
+
+```json
+"mcp": {"servers": {"tracker": {
+  "command": "python3", "args": ["mcp_servers/tracker_server.py", "--data", "data/tracker.json"], "cwd": ".",
+  "env": {}, "timeout_sec": 15, "max_result_bytes": 50000,
+  "tools": {"allow": ["list_tasks", "get_task"], "deny": ["update_task_status"]},
+  "effects": {"list_tasks": "read", "get_task": "read", "update_task_status": "write"}
+}}}
+```
+
+Ограничение доступа сервера:
+* сервер, которого нет в policy, не запускается; `"enabled": false` отключает сервер;
+* инструмент разрешён, только если он есть в `tools.allow` и его нет в `tools.deny` (deny сильнее); остальные инструменты
+  модель не видит, а если вызовет их по имени, runtime отклонит вызов (`policy_denied`);
+* `effects` задаёт класс действия. Неописанный инструмент считается `write`: в `safe` он требует подтверждения,
+  в Plan Mode запрещён, после сбоя не повторяется молча. Аннотациям сервера (`readOnlyHint`) runtime не доверяет;
+* серверу передаётся минимальное окружение (без ключей агента) и фиксированный `cwd`; есть таймаут и лимит размера результата.
+
+Другой совместимый stdio-сервер подключается так же, например официальный filesystem-сервер (нужен Node.js):
+
+```json
+"files": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "workspace"],
+          "tools": {"allow": ["read_text_file", "list_directory"], "deny": ["write_file", "edit_file", "move_file"]},
+          "effects": {"read_text_file": "read", "list_directory": "read"}}
+```
+
+Поддержано: stdio-транспорт и инструменты (`tools/list`, `tools/call`). Не поддержано: Streamable HTTP и SSE, resources,
+prompts, sampling, elicitation, уведомления `list_changed` (список инструментов читается при старте каждого run).
+
+---
+
+## Журнал событий и статистика
+
+Каждое событие — одна строка JSON. Файлы: `.agent_runs/<run_id>/events.jsonl` (события run) и
+`.agent_runs/sessions/<session_id>/events.jsonl` (вся сессия; те же события).
+
+```json
+{"id": "ev-3f9a1c2b7d10", "time": "2026-11-27T11:06:44.512+00:00", "session_id": "s-20261127-110644-ef0edc",
+ "run_id": "20261127-110644-599a06", "type": "tool_call",
+ "data": {"call_id": "m1", "name": "mcp__tracker__list_tasks", "arguments": {}, "kind": "mcp", "server": "tracker", "tool": "list_tasks", "effect": "read"}}
+```
+
+Типы событий: `run_started`, `user_message`, `skills_discovered`, `skill_invalid`, `skill_loaded`, `skill_installed`,
+`mcp_server_connected`, `mcp_server_error`, `model_request` (число сообщений, инструменты, оценка токенов по символам),
+`model_response` (usage из API, имена tool calls), `model_error`, `tool_call` (имя, аргументы, сервер/инструмент для MCP),
+`tool_result` (статус, ok, ошибка, результат), `confirmation_requested`, `user_decision`, `call_started`, `call_completed`,
+`uncertain_call`, `plan_submitted`, `task_done`, `run_completed` (итоговый ответ, usage), `run_failed`.
+События маркета пишутся в `.agent_runs/market/events.jsonl` в том же формате.
+
+**Токены.** Берутся только из `usage` ответа API (`prompt_tokens`/`completion_tokens` или `input_tokens`/`output_tokens`).
+Кэшированные (`prompt_tokens_details.cached_tokens`) показываются отдельно и в сумму второй раз не входят. Если usage нет,
+пишется `unknown`; если usage есть только у части запросов, ставится отметка о неполноте («usage есть у k из n запросов»).
+Оценка по символам (`~len/4`) хранится отдельно. Итоги считаются по run и по сессии. Доктор работает по правилам
+и модель не вызывает, поэтому его расход — 0 запросов.
+
+```bash
+python3 -m agent sessions                    # список сессий
+python3 -m agent stats <session_id> [--json] # загрузки скиллов, вызовы инструментов, MCP по серверу/инструменту, токены
+```
+
+Статистика: число загрузок каждого скилла, вызовов каждого инструмента (MCP — как `mcp:<server>/<tool>`),
+уникальных скиллов и инструментов, исходы вызовов, ошибки и отказы со ссылками на ID событий, токены по run и итог.
+
+---
+
+## Доктор сессий
+
+```bash
+python3 -m agent doctor <session_id> [--json]     # или /doctor в chat; отчёт сохраняется в sessions/<id>/doctor.json
+```
+
+Доктор показывает расходы по run (токены, вызовы и байты результатов по категориям builtin/skill/mcp), частоты скиллов
+и MCP. Правила заданы заранее (`agent/doctor.py → RULES`):
+
+| Правило | Условие | Похожий нормальный случай (не находка) |
+|---|---|---|
+| `repeated_error` | одинаковый вызов (имя + аргументы) завершился ошибкой ≥ 2 раз в одном run | после ошибки модель меняет вызов |
+| `unchanged_reread` | одинаковое чтение повторено без действий с побочным эффектом между повторами | чтение → запись → чтение (проверка) |
+| `skill_without_actions` | скилл загружен, а после него нет вызовов других инструментов | после загрузки идут действия |
+| `finished_without_verification` | run завершён, файл записан, после последней записи нет ни `read_file` этого файла, ни `Bash` | запись → тесты или перечитывание |
+
+Каждая находка содержит `run_id`, ID событий, фактические счётчики, интерпретацию и предложение. Интерпретация
+не выдаёт повтор за доказанно лишний. При `usage unknown/partial` доктор пишет об ограничении и не считает «лишние токены».
+Пары «проблема / нормальный случай» проверены в `tests/test_doctor.py`. Разбор реальной сессии лежит в `evals/doctor/`.
+
+---
+
+## Evals: A/B со скиллами и без
+
+```bash
+python3 -m agent eval run evals/suite.json --out evals/results/final     # всё одной командой
+python3 -m agent eval summary evals/results/final                          # пересобрать сводку
+```
+
+Одна команда последовательно для каждого trial: создаёт чистую папку `trials/<case>/<A|B><n>/` (копия фикстуры
+workspace + данные трекера + для B копия скиллов + сгенерированный policy), новую сессию и новый `run_id`, запускает
+агента в `auto` без Plan Mode с бюджетом trial, запускает программную проверку, считает routing и инструменты по журналу
+событий, дописывает строку в `results.jsonl` и обновляет `summary.md`. Повторный запуск пропускает сохранённые trials;
+недописанный trial (папка без строки) пересоздаётся с нуля. Порядок: A1, B1, A2, B2, A3, B3 для каждого сценария.
+
+**Условия A/B.** Одинаковы модель, `temperature=0`, инструменты, MCP-сервер (подключён одинаково в A и B), данные, запросы,
+лимиты, policy и решения по подтверждениям (в `auto` подтверждение нужно только для удаления; eval его всегда отклоняет).
+Различие одно: в B есть каталог скиллов и `load_skill`, в A нет. Версии скиллов и данные заморожены в репозитории.
+Проверки (`evals/checks/`) и эталоны (`evals/fixtures/*/expected.json`) лежат вне workspace trial: агент их не видит.
+
+**Гипотеза (записана до запусков).** Скиллы помогают маленькой модели соблюдать соглашения задачи, которых нет в запросе:
+какие задачи считать открытыми, обязательные разделы отчёта, отказ от выдуманных данных при сбое источника. Ожидаем,
+что B проходит не меньше сценариев, чем A, и чаще проходит c1, c4 и c5. Расход токенов у B выше из-за загрузки SKILL.md.
+
+| Сценарий | Источник | Запрос (кратко) | Уместный скилл | Обязательные инструменты | Проверка результата |
+|---|---|---|---|---|---|
+| `c1_open_tasks_mcp` | MCP | выгрузить ID открытых задач в `open-tasks.json` | `open-tasks-export` | `mcp:tracker/list_tasks` | множество ID = {T1,T3,T4,T6,T7} |
+| `c2_sprint_report` | файлы | отчёт по спринту в `report.md` | `sprint-report` | `read_file`, `write_file` | счётчики статусов 3/2/2, просрочены T1 и T6 |
+| `c3_fix_order_no_skill` | файлы | исправить `order.py`, тесты не менять | — (ни один) | `write_file`, `Bash` | `unittest` проходит, `test_order.py` не изменён |
+| `c4_incomplete_report` | файлы | неоднозначный запрос, у T8 нет статуса | `sprint-report` | `read_file`, `write_file` | open = 4 (T8 не считается), T8 упомянута, просрочки верны |
+| `c5_mcp_failure` | MCP (HTTP 503) | как c1, но трекер недоступен | `open-tasks-export` | `mcp:tracker/list_tasks` | файл не создан, ответ честно сообщает о сбое |
+
+Routing для B: все ожидаемые скиллы загружены, лишние не загружены, `commit-message` не загружен никогда. Для A — `n/a`.
+
+Строка результата (`results.jsonl`): `case_id, version, trial, run_id, session_id, outcome_pass, outcome_reason,
+routing_pass_or_na, routing_reason, tools_pass, input_tokens, output_tokens, usage_status, model_requests,
+skill_activations, mcp_calls, tool_calls, status, error, duration_sec, model, events, skill_versions`.
+
+**Результаты и вывод:** см. раздел «Результаты экспериментов» ниже и `evals/results/final/summary.md`.
+
+---
+
+## Маркет скиллов (уровень 8)
+
+Маркет — локальный реестр `market/` (источник может быть и https-адресом, например raw-файлом Git-репозитория):
+
+* `market/index-v1.json` — sprint-report 1.0.0, workload-summary 1.0.0;
+* `market/index-v2.json` — sprint-report **1.1.0**, workload-summary 1.0.0, **standup-notes 1.0.0** (новинка),
+  broken-example с неверным sha256 (некорректный пакет);
+* `market/index.json` — рабочий каталог источника `study-market`; `market/packages/<name>/<version>/SKILL.md` — пакеты.
+
+Запись каталога: `name`, `version` (semver), `description`, `path`, `files` (только `.md/.txt/.json`), `sha256` файла `SKILL.md`.
+Строки каталога никогда не исполняются: runtime только читает файлы по относительному пути без `..`, сверяет sha256,
+валидирует пакет как обычный скилл и атомарно переносит его в `skills_installed/<name>/` с `.install.json`
+(источник, версия, sha256, хеш пакета, ревизия каталога). Установленный скилл виден обычному загрузчику.
+
+```json
+"market": {"install_dir": "skills_installed", "agent_install": true, "sources": {"study-market": {
+  "index": "market/index.json", "check": true, "auto_update": true, "verify_updates": true, "interval_minutes": 60}}}
+```
+
+```bash
+python3 -m agent market list                         # установленные, источники, время и ревизия последней проверки, кандидаты
+python3 -m agent market search "нагрузка исполнителей"
+python3 -m agent market install study-market workload-summary
+python3 -m agent market check [--force]              # по интервалу; --force — принудительно для демо
+python3 -m agent market set study-market --check off|on --auto-update off|on --verify-updates off|on
+python3 -m agent market events                       # время проверки, старая/новая ревизия, результат, ошибки
+```
+
+* **Автоматическая проверка:** при старте `chat` и `run`, если с прошлой проверки прошло `interval_minutes`.
+* **Новинки** сообщаются один раз (`[market] Новый скилл ...`). Повторная проверка без изменений не создаёт дубликатов
+  и не переустанавливает ту же версию.
+* **Новые версии установленных:** при `auto_update: false` только сообщение; при `auto_update: true, verify_updates: false`
+  новая версия скачивается, проверяется и активируется для следующего run (начатый run сохраняет свои версии).
+  При `verify_updates: true` она становится кандидатом для уровня 9.
+* **Агент** может сам найти и поставить скилл по задаче: инструменты `market_search` (чтение) и `market_install`
+  (действие с побочным эффектом: в `safe` требует подтверждения; выключается `agent_install: false`).
+* Недоступный или испорченный каталог и некорректный пакет дают ошибку в событиях, а установленная копия остаётся рабочей.
+
+Демо двух версий маркета:
+
+```bash
+cp market/index-v1.json market/index.json && python3 -m agent market check --force
+cp market/index-v2.json market/index.json && python3 -m agent market check --force   # обновление + новинка + ошибка пакета
+python3 -m agent market check --force                                                  # повтор: изменений нет
+```
+
+## Проверка обновления через eval и откат (уровень 9)
+
+```
+новая версия в маркете → кандидат в .agent_runs/market/candidates/ → eval old vs new (5 сценариев × 3 trials × 2 = 30)
+  → правило → применение или отклонение → decision.md + decision.json → откат из chat или CLI
+```
+
+```bash
+python3 -m agent market verify sprint-report          # сравнение и автоматическое решение
+python3 -m agent market rollback sprint-report         # или /rollback-skill sprint-report в chat
+```
+
+В обеих конфигурациях скиллы включены, меняется только версия `sprint-report` (`skill_override`). Каждая строка
+результатов хранит фактические `skill_versions` trial.
+
+**Правило решения (задано заранее):** обновление принимается, если (1) ни в одном сценарии число успешных попыток
+не уменьшилось, (2) ошибок выбора скиллов не стало больше, (3) usage полный во всех trials и средний расход
+input+output токенов на trial вырос не более чем на **25%**. Порог 25%: новая версия может быть немного длиннее
+и добавлять шаг перепроверки. Рост больше четверти на учебных задачах означает лишние запросы или циклы, а не
+только более длинную инструкцию. При неполном usage соблюдение порога подтвердить нельзя, и обновление отклоняется.
+Решение относится только к учебному набору.
+
+Сохраняются обе версии (кандидат, `history/`, `rejected/`), журналы всех 30 trials, метрики и причина решения.
+При отклонении остаётся старая версия. Ветки принятия, отклонения (меньше успехов, рост токенов, неполный usage)
+и отката проверены детерминированными тестами `tests/test_update_check.py`.
+
+---
+
+## Графический интерфейс (уровень 10)
+
+```bash
+python3 -m agent ui                      # http://127.0.0.1:8765
+python3 -m agent ui --scripted demo/scripted_chat.json   # демо без LLM
+```
+
+Это локальный веб-сервер на `http.server` (stdlib) и одна HTML-страница на чистом JS. Он работает поверх **того же**
+`AgentRuntime`, policy, журнала событий, маркета и eval-runner, что и CLI: UI не дублирует логику, а вызывает те же методы.
+
+| Вкладка | Что работает |
 |---|---|
-| `python3 -m agent status <run_id>` | статус, ожидаемое решение, бюджет, чеклист задач |
-| `python3 -m agent list` | все запуски |
-| `python3 -m agent calls <run_id>` | журнал tool calls (фаза, задача, статус, попытки) |
-| `python3 -m agent approve <run_id>` / `deny <run_id> --reason "…"` | подтверждение или отказ для ожидающего действия |
-| `python3 -m agent plan show\|approve\|reject <run_id>` | Plan Mode |
-| `python3 -m agent resume <run_id>` | продолжить после сбоя или прерывания |
-| `python3 -m agent recover <run_id> --action retry\|fail\|abort [--changes attribute\|external]` | решение по неопределённому вызову или конфликту |
-| `python3 -m agent tasks <run_id>` | задачи и подтверждения их результата |
-| `python3 -m agent diff <run_id> [--entries]` | изменения файлов запуска |
-| `python3 -m agent rollback <run_id>` | откат изменений запуска |
-| `python3 -m agent abort <run_id>` | завершить запуск |
-| `python3 -m agent policy-check <tool> '<json>' [--mode auto] [--phase planning]` | решение policy для одного вызова без модели |
+| Диалог | список и открытие сохранённых сессий (те же, что у `chat`), новая сессия A/B, сообщения с контекстом, выбор `safe`/`auto`; события run появляются по мере работы (скиллы, MCP-вызовы, результаты, ошибки); кнопки «Разрешить» и «Отклонить» с причиной для действий, требующих подтверждения по policy |
+| Статистика и доктор | загрузки скиллов, вызовы инструментов и MCP по серверу, токены по run и итог (с пометкой unknown/partial), ошибки; доктор с находками и ограничениями |
+| Скиллы и MCP | включение и отключение скиллов (`skills.disabled` в policy); MCP-серверы, подключение и просмотр инструментов с эффектом и доступом; добавление, изменение и удаление сервера в policy |
+| Маркет | источники с переключателями `check` / `auto_update` / `verify_updates`, время и ревизия последней проверки, проверка сейчас, установленные (откат), новинки (установка), кандидаты обновлений и запуск их проверки через eval, решения (accepted/rejected с причиной), события маркета |
+| Evals | запуск A/B eval в фоне, лог задачи, список результатов (включая сравнения обновлений), таблица trials и сводка |
 
-Другой policy-файл: `--policy path/to/policy.json` или переменная `AGENT_POLICY`.
+Настройки сохраняются в `policy.json` (скиллы, MCP) и `.agent_runs/market/state.json` (переключатели маркета).
+Изменённый policy проверяется загрузчиком, а некорректный откатывается к прежнему файлу. В API и логах нет ключей:
+поля вида `api_key` маскируются. Сервер слушает только `127.0.0.1`.
 
 ---
 
-## Policy
+## Результаты экспериментов
+
+_Заполняется по итогам прогонов на настоящей LLM: `evals/results/final/summary.md` (A/B, 30 trials) и
+`.agent_runs/market/updates/...` → `evals/results/update-sprint-report/decision.md` (old/new, 30 trials)._
+
+---
+
+## Тесты
+
+```bash
+python3 -m unittest discover -s tests -t . -v
+```
+
+119 детерминированных тестов без сети и LLM (модель заменена `ScriptedModel`). 64 из них — тесты ДЗ № 1 из `main`.
+
+| Файл | Что доказывает |
+|---|---|
+| `test_skills.py` | валидные скиллы; понятные ошибки некорректных SKILL.md без поломки остальных; новая папка подхватывается следующим run; в промпте только каталог; A без каталога и `load_skill`; скилл не меняет разрешения; снимок версии для начатого run |
+| `test_mcp.py` | инструменты и схемы с сервера; результат возвращается модели; запрет через policy (deny и не в allowlist); write-инструмент MCP требует подтверждения в safe; проверка `inputSchema`; таймаут, ошибка 503, падение сервера, сервер не стартует; второй сервер через конфигурацию; отключённый сервер |
+| `test_events_and_chat.py` | поля событий и связь с session/run; ключ не логируется; usage complete/partial/unknown, cached не учитывается дважды; статистика по скиллам, инструментам, MCP; диалог с контекстом, подтверждением, отказом, `/stats`; продолжение сессии после перезапуска |
+| `test_doctor.py` | 4 правила × (проблема / нормальный случай); расходы, частоты, ограничения при неполном usage |
+| `test_evals.py` | все 5 сценариев × A/B, проверки, routing, сводка; возобновление без дублей и пересоздание недописанного trial; агент не видит проверок и эталонов; MCP одинаков в A и B |
+| `test_market.py` | установка с источником, версией, sha256; отказ при неверном хеше и некорректном пакете; новинка сообщается один раз, повтор не переустанавливает; v1 → v2: обновление, новинка, ошибка пакета; начатый run сохраняет версию; автообновление и проверка выключаются; недоступный маркет; автоматическая проверка по интервалу; откат; агент ищет и ставит скилл; подтверждение установки в safe |
+| `test_update_check.py` | принятие и откат; отклонение при меньшем числе успехов; отклонение при росте токенов > 25%; неполный usage не подтверждает порог |
+| `test_ui.py` | HTTP API UI: диалог с подтверждением и уточнением, поток событий, статистика, доктор, маскировка секретов; изменение скиллов, MCP и маркета через UI; ошибки 400 |
+| остальные | тесты ДЗ № 1: agent loop, policy, восстановление, Plan Mode и задачи, бюджет, журнал и откат, CLI, LLM-клиент |
+
+---
+
+## Часть ДЗ № 1 (без изменений)
+
+Ниже коротко о механизмах первой работы. Новые инструменты (`load_skill`, MCP, `market_*`) проходят тот же
+конвейер: схема → policy → режим → бюджет → журнал → исполнение. Новых Bash-команд в allowlist не добавлялось.
+
+### Policy
 
 `policy.json` лежит вне `workspace`, и агент не может его изменить: все пути агента ограничены workspace,
 а сам файл и `.agent_runs/` дополнительно помечены как защищённые. Policy перечитывается **перед каждым исполнением**,
@@ -199,7 +450,7 @@ python3 -m agent policy-check read_file '{"path": "../policy.json"}'
 python3 -m agent policy-check delete_file '{"path": "order.py"}' --mode auto
 ```
 
-### Режимы
+#### Режимы
 
 * **safe** — чтение сразу; `write_file` и `Bash` после подтверждения; удаление после подтверждения.
 * **auto** — чтение сразу; `write_file` и `Bash` сразу, если прошли policy; удаление после подтверждения.
@@ -217,7 +468,7 @@ python3 -m agent deny <run_id> --reason "не трогай этот файл"
 
 ---
 
-## Plan Mode и утверждение плана
+### Plan Mode и утверждение плана
 
 `run` по умолчанию начинается в фазе **planning**. В ней модели доступны только `list_files`, `read_file` и `submit_plan`.
 Если модель всё же вызовет `write_file`, `delete_file` или `Bash`, runtime отклонит вызов с ошибкой `not_allowed_in_phase`.
@@ -253,7 +504,7 @@ python3 -m agent plan reject <run_id> --reason "добавь проверку, �
 После отклонения модель получает причину и присылает новую версию плана. Утверждение плана **не** разрешает действия заранее:
 в `safe` каждая запись и каждый `Bash` по-прежнему требуют подтверждения, в `auto` действуют правила базовой части.
 
-## Задачи (уровень 9)
+### Задачи (уровень 9)
 
 После утверждения каждый шаг становится задачей: `id`, описание, зависимости, состояние (`pending → in_progress → done`)
 и проверяемый результат (`checks`). Runtime запускает задачи последовательно и берёт следующей только ту,
@@ -290,7 +541,7 @@ python3 -m agent status <run_id>
 
 ---
 
-## Восстановление по run_id (блок 3)
+### Восстановление по run_id (блок 3)
 
 Всё состояние запуска лежит в `.agent_runs/<run_id>/state.json`: история сообщений, tool calls с аргументами,
 статусами, попытками и результатами, решения пользователя, план, задачи, бюджет, журнал. Файл пишется атомарно
@@ -335,7 +586,7 @@ python3 -m agent recover <run_id> --action retry --changes attribute
 
 ---
 
-## Бюджет (уровень 8)
+### Бюджет (уровень 8)
 
 Лимиты задаются в `policy.json → budget` и фиксируются в запуске при его создании. Переопределить: `run … --budget model_calls=10,tool_calls=20`.
 
@@ -355,7 +606,7 @@ python3 -m agent recover <run_id> --action retry --changes attribute
 
 ---
 
-## Журнал изменений и откат (уровень 10)
+### Журнал изменений и откат (уровень 10)
 
 Снимок дерева — это `{путь: sha256}` всех файлов зоны агента. Содержимое хранится в `blobs/<sha256>`.
 Список путей фиксирует не только изменения, но и создание и удаление файлов.
@@ -388,61 +639,3 @@ python3 -m agent rollback <run_id>
 
 ---
 
-## Тесты
-
-```bash
-python3 -m unittest discover -s tests -t . -v      # или просто: python3 -m unittest
-pytest                                             # если установлен pytest
-```
-
-64 детерминированных теста, без сети и LLM: модель заменена `ScriptedModel`, каждый тест работает на временной копии контрольного проекта.
-
-| Файл | Что доказывает |
-|---|---|
-| `test_agent_loop.py` | контрольная задача решена: `Bash` запускает `python3 -m unittest -v` (exit 0), `test_order.py` не изменён; несколько вызовов в одном ответе; ошибки инструментов возвращаются модели; таймаут и лимит вывода Bash; секреты не попадают в Bash |
-| `test_policy.py` | разрешённая команда; запрещённые (`\|`, `;`, `&&`, `$()`, `` ` ``, `>`, `bash -c`, `VAR=`), приоритет deny; разрешённая команда в запрещённой директории; запрещённая поддиректория для файловых инструментов; отказ для `..`, абсолютного пути и симлинка; повторная проверка policy после подтверждения; режимы safe/auto; отказ с причиной |
-| `test_recovery.py` | управляемая точка отказа между исполнением и сохранением результата; неопределённый вызов не повторяется молча; retry/fail/abort; Bash неповторяем; завершённые вызовы не повторяются; повтор `tool_call_id` и ошибка протокола |
-| `test_plan_and_tasks.py` | до утверждения плана — ни одной операции с побочным эффектом; reject с причиной; safe после утверждения всё равно спрашивает; проверка плана; три задачи с зависимостями, проверки runtime, чеклист; задачи после `resume` не перезапускаются |
-| `test_budget.py` | исчерпание каждого лимита; пачка «всё или ничего»; усечение результата; счётчики после `resume` и утверждения плана; сбой между списанием и сохранением результата |
-| `test_journal.py` | изменение `order.py`, diff, откат после перезапуска; конфликт при посторонней правке (ни один файл не записан); создание и удаление файлов; изменения от Bash; конфликт перед действием; откат ждёт разрешения неопределённого вызова |
-| `test_cli.py` | сквозные сценарии через CLI в отдельных процессах, включая настоящий `os._exit` и `resume` |
-| `test_llm.py` | HTTP-клиент против локального фейкового OpenAI-compatible сервера: формат tools, `role: tool` + `tool_call_id`, ошибка API → `interrupted` → `resume` |
-
----
-
-## Сценарий демонстрации для защиты
-
-```bash
-# 1. Контрольная задача с планом и задачами (настоящая модель из .env)
-python3 -m agent run "Исправь расчёт итоговой стоимости заказа, чтобы тесты проходили. Тесты не меняй. Сам найди нужные файлы, внеси исправление и запусти тесты." -i
-python3 -m agent tasks <run_id>
-python3 -m agent diff <run_id>
-python3 -m agent rollback <run_id>
-
-# 2. То же детерминированно, если модель недоступна
-python3 -m agent run "Исправь расчёт" --scripted demo/scripted_plan.json -i
-
-# 3. Сбой и восстановление
-python3 -m agent run "Исправь расчёт" --mode auto --no-plan --scripted demo/scripted_no_plan.json --crash-at after_tool_execute:write_file
-python3 -m agent resume <run_id>
-python3 -m agent recover <run_id> --action retry --changes attribute
-
-# 4. Пограничные случаи policy
-python3 -m agent policy-check Bash '{"command": "python3 -m unittest -v; rm -rf /", "cwd": "."}'
-```
-
-Где что происходит (для вопросов на защите):
-
-* **Почему модель выбрала инструмент** — она видит описания и JSON Schema инструментов, системный промпт со списком разрешённых команд и результаты предыдущих вызовов. Решение исполнять или нет принимает runtime.
-* **Где проверяется policy** — `AgentRuntime._process_call` → `PolicyEngine.check_call` (`agent/policy.py`), заново перед каждым исполнением, в том числе после подтверждения и при повторе.
-* **Что происходит при отказе** — вызов получает статус `denied` или `rejected`, модель получает `role: tool` с причиной и продолжает.
-* **Исчерпание бюджета** — `Budget.shortfall` до начала действия; пачка целиком; запуск `failed` при исчерпании `model_calls`.
-* **Сбой** — `AgentRuntime._reconcile`: `started` без результата превращается в `uncertain`, дальше решение пользователя (`recover`).
-* **Подтверждение результата задачи** — `verify_task` в `agent/plan.py` сверяет журнал вызовов, хеши и содержимое файлов.
-* **Откат** — `Journal.rollback` в `agent/journal.py`: policy → хеши → staging → `os.replace`.
-
-## Ограничения
-
-* Проверка команд — точные строки без shell-синтаксиса. Это осознанное упрощение по условию задания, не песочница.
-* Блокировка запуска использует `fcntl` (macOS/Linux/WSL).
-* Задачи выполняются последовательно (параллельность не требуется).

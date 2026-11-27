@@ -3,20 +3,24 @@ from __future__ import annotations
 import copy
 import difflib
 import json
+from pathlib import Path
 
-from agent import prompts
+from agent import prompts, usage
 from agent.budget import MIN_RESULT_ALLOWANCE, Budget, fit_result
 from agent.faults import Faults
 from agent.journal import Journal
 from agent.jsonschema import coerce_json_strings, validate
 from agent.llm import ModelError
+from agent.mcp import McpManager
 from agent.plan import tasks_from_plan, validate_plan, verify_task
-from agent.policy import MODES, ArgumentProblem, PolicyEngine, PolicyViolation, approval_requirement
+from agent.policy import MODES, ArgumentProblem, CheckedCall, PolicyEngine, PolicyViolation, approval_requirement, mcp_effect
 from agent.report import Reporter, format_changes, shorten
 from agent.store import RunStore
-from agent.tools import EXECUTION, PLANNING, REGISTRY, WORK_TOOL_NAMES, ToolExecutor, offered_tools
-from agent.util import canonical_json, dumps, now_iso, sha256_bytes
+from agent.skills import discover
+from agent.tools import EXECUTION, LOAD_SKILL, MARKET_INSTALL, MARKET_SEARCH, PLANNING, REGISTRY, WORK_TOOL_NAMES, ToolExecutor, mcp_spec, offered_tools
+from agent.util import canonical_json, dumps, new_event, now_iso, sha256_bytes
 
+MAX_LOGGED_RESULT = 20_000
 TERMINAL_STATUSES = frozenset({"completed", "failed", "aborted", "rolled_back"})
 FINAL_CALL_STATUSES = frozenset({"completed", "failed", "rejected", "denied"})
 MAX_NUDGES = 3
@@ -48,36 +52,56 @@ def err(code: str, message: str, **extra) -> dict:
     return {"ok": False, "error": code, "message": message, **extra}
 
 
+def upgrade_state(state: dict) -> dict:
+    state.setdefault("session_id", None)
+    state.setdefault("skills", {"enabled": False, "catalog": [], "errors": [], "loaded": []})
+    state.setdefault("mcp", {"tools": [], "errors": [], "servers": []})
+    state.setdefault("usage", usage.initial())
+    return state
+
+
 class AgentRuntime:
     def __init__(self, policy_path, model=None, *, reporter: Reporter | None = None,
-                 faults: Faults | None = None, executor: ToolExecutor | None = None):
+                 faults: Faults | None = None, executor: ToolExecutor | None = None, mcp: McpManager | None = None):
         self.engine = PolicyEngine(policy_path)
         policy = self.engine.load()
         self.store = RunStore(policy.runs_dir)
         self.model = model
+        self.mcp = mcp
         self.out = reporter or Reporter()
         self.faults = faults or Faults()
         self.executor = executor or ToolExecutor()
         self.state: dict | None = None
 
     def start(self, task: str, *, mode: str = "safe", plan_mode: bool = True,
-              budget: dict | None = None, model_info: dict | None = None) -> str:
+              budget: dict | None = None, model_info: dict | None = None, session_id: str | None = None,
+              history: list | None = None, skills: bool = True) -> str:
         if mode not in MODES:
             raise UserError(f"mode must be one of {MODES}")
         policy = self.engine.load()
         limits = dict(policy.budget)
         limits.update(budget or {})
         run_id = self.store.new_run_id()
+        if session_id is None:
+            session_id = self.store.new_session()["session_id"]
+        skills = bool(skills and policy.skills_dirs)
+        catalog, skill_errors = discover(policy.skills_dirs, policy.skills_disabled) if skills else ([], [])
+        mcp_tools, mcp_errors, mcp_servers = self.mcp_manager().connect(policy) if policy.mcp_servers else ([], [], [])
+        catalog_state = [skill.to_state() for skill in catalog]
+        system = {"role": "system", "content": prompts.system_prompt(policy, mode, catalog_state if skills else None)}
+        user = {"role": "user", "content": prompts.initial_user_message(task, plan_mode)}
+        messages = [system] + [m for m in (history or [])[1:]] + [user]
         self.state = {
-            "version": 1, "run_id": run_id, "created_at": now_iso(), "updated_at": None,
+            "version": 2, "run_id": run_id, "session_id": session_id, "created_at": now_iso(), "updated_at": None,
             "task": task, "mode": mode, "plan_mode": plan_mode,
+            "skills": {"enabled": skills, "catalog": catalog_state, "errors": skill_errors, "loaded": [],
+                       "market": bool(skills and policy.market and policy.market.get("agent_install"))},
+            "mcp": {"tools": mcp_tools, "errors": mcp_errors, "servers": mcp_servers},
+            "usage": usage.initial(),
             "phase": PLANNING if plan_mode else EXECUTION,
             "status": "running", "pending": None, "error": None, "final_answer": None,
             "model": model_info,
-            "messages": [
-                {"role": "system", "content": prompts.system_prompt(policy, mode)},
-                {"role": "user", "content": prompts.initial_user_message(task, plan_mode)},
-            ],
+            "messages": messages,
             "batch": None,
             "planning_calls": {},
             "execution_calls": {},
@@ -90,9 +114,68 @@ class AgentRuntime:
         with self.store.lock(run_id):
             self._journal().init_baseline(policy)
             self._save()
-        self._event("run_started", mode=mode, plan_mode=plan_mode, task=task)
+        self._event("run_started", mode=mode, plan_mode=plan_mode, skills_enabled=skills, model=model_info,
+                    history_messages=len(messages) - 2)
+        self._event("user_message", text=task)
+        if skills:
+            self._event("skills_discovered", count=len(catalog_state),
+                        skills=[{"name": s["name"], "path": s["path"], "sha256": s["sha256"]} for s in catalog_state])
+            for problem in skill_errors:
+                self._event("skill_invalid", **problem)
+        for server in mcp_servers:
+            self._event("mcp_server_connected", **server)
+        for problem in mcp_errors:
+            self._event("mcp_server_error", **problem)
         self.out.run_started(self.state)
         return run_id
+
+    def mcp_manager(self) -> McpManager:
+        if self.mcp is None:
+            self.mcp = McpManager()
+        return self.mcp
+
+    def close(self) -> None:
+        if self.mcp is not None:
+            self.mcp.close()
+
+    def _spec(self, name: str):
+        if name in REGISTRY:
+            return REGISTRY[name]
+        st = self.state or {}
+        if name == LOAD_SKILL.name and (st.get("skills") or {}).get("enabled"):
+            return LOAD_SKILL
+        if name in (MARKET_SEARCH.name, MARKET_INSTALL.name) and (st.get("skills") or {}).get("market"):
+            return MARKET_SEARCH if name == MARKET_SEARCH.name else MARKET_INSTALL
+        for entry in (st.get("mcp") or {}).get("tools", []):
+            if entry["exposed"] == name:
+                server = self.engine.load().mcp_server(entry["server"])
+                effect = mcp_effect(server, entry["tool"]) if server else entry["effect"]
+                return mcp_spec(entry, effect)
+        return None
+
+    def available_tool_names(self) -> list[str]:
+        names = list(REGISTRY)
+        st = self.state or {}
+        if (st.get("skills") or {}).get("enabled"):
+            names.append(LOAD_SKILL.name)
+        if (st.get("skills") or {}).get("market"):
+            names.extend([MARKET_SEARCH.name, MARKET_INSTALL.name])
+        names.extend(entry["exposed"] for entry in (st.get("mcp") or {}).get("tools", []))
+        return names
+
+    def _offered(self) -> list:
+        st = self.state
+        specs = offered_tools(st["phase"], bool(st["tasks"]))
+        if st["skills"]["enabled"]:
+            specs.append(LOAD_SKILL)
+        if st["skills"].get("market"):
+            specs.extend(spec for spec in (MARKET_SEARCH, MARKET_INSTALL) if st["phase"] in spec.phases)
+        for entry in st["mcp"]["tools"]:
+            if entry["offered"]:
+                spec = self._spec(entry["exposed"])
+                if st["phase"] in spec.phases:
+                    specs.append(spec)
+        return specs
 
     def run(self, task: str, **kwargs) -> str:
         run_id = self.start(task, **kwargs)
@@ -100,7 +183,7 @@ class AgentRuntime:
         return run_id
 
     def load(self, run_id: str) -> dict:
-        self.state = self.store.load(run_id)
+        self.state = upgrade_state(self.store.load(run_id))
         return self.state
 
     def drive(self) -> str:
@@ -132,8 +215,8 @@ class AgentRuntime:
         self.state["updated_at"] = now_iso()
         self.store.save(self.state)
 
-    def _event(self, event_name: str, **data) -> None:
-        self.store.append_event(self.state["run_id"], event_name, **data)
+    def _event(self, event_type: str, **data) -> None:
+        self.store.append_event(new_event(event_type, self.state.get("session_id"), self.state["run_id"], data))
 
     def _journal(self) -> Journal:
         return Journal(self.store, self.state["run_id"], self.state["journal"])
@@ -156,11 +239,12 @@ class AgentRuntime:
     def _fail(self, code: str, message: str) -> None:
         self.state["status"] = "failed"
         self.state["error"] = {"code": code, "message": message, "at": now_iso()}
-        self._event("run_failed", code=code, message=message)
+        self._event("run_failed", code=code, message=message, usage=dict(self.state["usage"]),
+                    usage_status=usage.completeness(self.state["usage"]))
         self._save()
 
     def _load_locked(self, run_id: str) -> None:
-        self.state = self.store.load(run_id)
+        self.state = upgrade_state(self.store.load(run_id))
         self._reconcile()
 
     def _reconcile(self) -> None:
@@ -171,7 +255,7 @@ class AgentRuntime:
         for record in self.all_calls():
             if record["status"] != "started":
                 continue
-            spec = REGISTRY[record["name"]]
+            spec = self._spec(record["name"])
             attempt = record["attempts"][-1]
             changed = True
             if not spec.side_effect:
@@ -207,15 +291,23 @@ class AgentRuntime:
         budget.charge("model_calls", 1)
         self._save()
         self.faults.hit("after_model_charge")
-        tools = [spec.to_openai() for spec in offered_tools(st["phase"], bool(st["tasks"]))]
+        tools = [spec.to_openai() for spec in self._offered()]
+        estimated = len(dumps(st["messages"]) + dumps(tools)) // 4
+        self._event("model_request", request=budget.used("model_calls"), messages=len(st["messages"]),
+                    tools=[t["function"]["name"] for t in tools], estimated_input_tokens=estimated)
         try:
             response = self.model.complete(copy.deepcopy(st["messages"]), tools)
         except ModelError as exc:
+            usage.record_failed(st["usage"], estimated)
             st["status"] = "interrupted"
             st["error"] = {"code": "model_error", "message": str(exc), "at": now_iso()}
             self._event("model_error", message=str(exc))
             self._save()
             return
+        norm = usage.record(st["usage"], response.usage, estimated)
+        self._event("model_response", usage=norm, usage_raw_available=response.usage is not None,
+                    content=shorten(response.content or "", 2000),
+                    tool_calls=[{"id": c.id, "name": c.name} for c in response.tool_calls])
         self.out.assistant(response.content)
         if response.tool_calls:
             st["nudges"] = 0
@@ -274,14 +366,19 @@ class AgentRuntime:
             budget.charge("tool_calls", need_calls)
         for record in new_records:
             self._calls_for(phase)[record["id"]] = record
-            self.out.tool_call(record)
+            spec = self._spec(record["name"])
+            self._event("tool_call", call_id=record["id"], name=record["name"], arguments=record["arguments"],
+                        arguments_raw=None if record["arguments"] is not None else record["arguments_raw"],
+                        phase=phase, task_id=task_id, kind=spec.kind if spec else "unknown",
+                        effect=spec.effect if spec else None,
+                        server=spec.server if spec else None, tool=spec.remote if spec else None)
+            self.out.tool_call(record, spec)
         if shortage:
             self.out.line(f"   x the whole batch was rejected: {'; '.join(shortage)}")
         st["batch"] = {"items": items, "created_at": now_iso()}
 
-    @staticmethod
-    def _is_side_effect(record: dict) -> bool:
-        spec = REGISTRY.get(record["name"])
+    def _is_side_effect(self, record: dict) -> bool:
+        spec = self._spec(record["name"])
         return bool(spec and spec.side_effect and record["phase"] in spec.phases)
 
     def _on_text_answer(self, text: str) -> None:
@@ -297,7 +394,8 @@ class AgentRuntime:
         st["status"] = "completed"
         st["phase"] = "done"
         st["completed_at"] = now_iso()
-        self._event("run_completed")
+        self._event("run_completed", final_answer=text, usage=dict(st["usage"]),
+                    usage_status=usage.completeness(st["usage"]))
 
     def _nudge(self, message: str) -> None:
         st = self.state
@@ -361,10 +459,10 @@ class AgentRuntime:
         self._save()
 
     def _process_call(self, record: dict) -> bool:
-        spec = REGISTRY.get(record["name"])
+        spec = self._spec(record["name"])
         if spec is None:
-            return self._reject(record, "unknown_tool",
-                                f"Unknown tool {record['name']!r}. Available tools: {', '.join(sorted(REGISTRY))}")
+            return self._reject(record, "unknown_tool", f"Unknown tool {record['name']!r}. Available tools: "
+                                                        f"{', '.join(sorted(self.available_tool_names()))}")
         if record["phase"] not in spec.phases:
             if record["phase"] == PLANNING:
                 message = (f"{spec.name} is blocked in PLAN MODE: until the user approves a plan only read-only "
@@ -389,7 +487,7 @@ class AgentRuntime:
                 reason=decision.get("reason") or "no reason given"))
         policy = self.engine.load()
         try:
-            checked = self.engine.check_call(policy, spec.name, args)
+            checked = self._check(policy, spec, args)
         except PolicyViolation as exc:
             return self._reject(record, "policy_denied", str(exc))
         except ArgumentProblem as exc:
@@ -406,6 +504,55 @@ class AgentRuntime:
             return True
         return self._execute(record, spec, checked, policy)
 
+    def _check(self, policy, spec, args: dict) -> CheckedCall:
+        if spec.kind == "skill":
+            names = [s["name"] for s in self.state["skills"]["catalog"]]
+            if args["name"] not in names:
+                raise ArgumentProblem(f"unknown skill {args['name']!r}; available skills: {', '.join(names) or 'none'}")
+            return CheckedCall(spec.name, args)
+        if spec.kind == "mcp":
+            self.engine.check_mcp(policy, spec.server, spec.remote, args)
+            return CheckedCall(spec.name, args)
+        if spec.kind == "market":
+            if not policy.market or not policy.market.get("agent_install"):
+                raise PolicyViolation("skill installation by the agent is disabled in the policy")
+            if spec.name == MARKET_INSTALL.name and args["source"] not in policy.market["sources"]:
+                raise ArgumentProblem(f"unknown market source {args['source']!r}")
+            return CheckedCall(spec.name, args)
+        return self.engine.check_call(policy, spec.name, args)
+
+    def _run_tool(self, spec, checked: CheckedCall, policy, allowance: int) -> dict:
+        if spec.kind == "skill":
+            skill = next(s for s in self.state["skills"]["catalog"] if s["name"] == checked.args["name"])
+            self.state["skills"]["loaded"].append({"name": skill["name"], "sha256": skill["sha256"], "at": now_iso()})
+            self._event("skill_loaded", name=skill["name"], sha256=skill["sha256"], path=skill["path"])
+            self.out.line(f"[skills] Загружен скилл: {skill['name']}")
+            return {"ok": True, "skill": skill["name"], "instructions": skill["body"]}
+        if spec.kind == "mcp":
+            return self.mcp_manager().call(policy.mcp_server(spec.server), spec.remote, checked.args, allowance)
+        if spec.kind == "market":
+            return self._market_tool(spec, checked.args, policy)
+        return self.executor.execute(checked, policy, allowance)
+
+    def _market_tool(self, spec, args: dict, policy) -> dict:
+        from agent.market import Market, MarketError
+        from agent.skills import SkillError, load_skill_dir
+        market = Market(policy, self.state.get("session_id"), log=self.out.line)
+        if spec.name == MARKET_SEARCH.name:
+            return {"ok": True, "results": market.search(args["query"])[:10]}
+        try:
+            meta = market.install(args["source"], args["name"])
+            skill = load_skill_dir(Path(policy.market["install_dir"]) / args["name"])
+        except (MarketError, SkillError) as exc:
+            return {"ok": False, "error": "install_failed", "message": str(exc)}
+        catalog = self.state["skills"]["catalog"]
+        catalog[:] = [s for s in catalog if s["name"] != skill.name] + [skill.to_state()]
+        self._event("skill_installed", name=skill.name, version=meta["version"], source=meta["source"],
+                    sha256=meta["sha256"])
+        self.out.line(f"[market] Установлен скилл {skill.name} {meta['version']} из {meta['source']}")
+        return {"ok": True, "installed": skill.name, "version": meta["version"],
+                "message": f"Installed. Call load_skill with name {skill.name!r} to read its instructions."}
+
     def _reject(self, record: dict, code: str, message: str) -> bool:
         return self._finish(record, "rejected", err(code, message))
 
@@ -414,8 +561,18 @@ class AgentRuntime:
         record["result"] = result
         record["finished_at"] = now_iso()
         self._event("call_finished", call_id=record["id"], tool=record["name"], status=status, error=result.get("error"))
+        self._log_result(record)
         self.out.tool_outcome(record)
         return False
+
+    def _log_result(self, record: dict) -> None:
+        spec = self._spec(record["name"])
+        result = record["result"]
+        text = dumps(result)
+        logged = result if len(text) <= MAX_LOGGED_RESULT else {"truncated_in_log": True, "preview": text[:MAX_LOGGED_RESULT]}
+        self._event("tool_result", call_id=record["id"], name=record["name"], status=record["status"],
+                    ok=bool(result.get("ok")), error=result.get("error"), kind=spec.kind if spec else "unknown",
+                    server=spec.server if spec else None, tool=spec.remote if spec else None, result=logged)
 
     def _execute(self, record: dict, spec, checked, policy) -> bool:
         st = self.state
@@ -454,7 +611,7 @@ class AgentRuntime:
         self.faults.hit("after_tool_start", spec.name)
 
         allowance = budget.remaining("result_bytes")
-        raw_result = self.executor.execute(checked, policy, allowance)
+        raw_result = self._run_tool(spec, checked, policy, allowance)
         self.faults.hit("after_tool_execute", spec.name)
 
         result, size = fit_result(raw_result, allowance)
@@ -472,6 +629,7 @@ class AgentRuntime:
         record["result"] = result
         record["finished_at"] = attempt["finished_at"]
         self._event("call_completed", call_id=record["id"], tool=spec.name, attempt=attempt["n"], result_bytes=size)
+        self._log_result(record)
         self._save()
         self.out.tool_outcome(record)
         self.faults.hit("after_result_save", spec.name)
@@ -480,7 +638,8 @@ class AgentRuntime:
     def _submit_plan(self, record: dict, plan: dict) -> bool:
         st = self.state
         policy = self.engine.load()
-        problems = validate_plan(plan, tool_names=WORK_TOOL_NAMES, engine=self.engine, policy=policy)
+        tool_names = WORK_TOOL_NAMES | set(self.available_tool_names()) - {"submit_plan"}
+        problems = validate_plan(plan, tool_names=tool_names, engine=self.engine, policy=policy)
         if problems:
             return self._finish(record, "completed", err(
                 "invalid_plan", "The runtime did not accept the plan. Fix the problems and call submit_plan again.",
@@ -607,7 +766,7 @@ class AgentRuntime:
             pending = self._require_pending("recovery", "conflict")
             kind = pending["kind"]
             record = self._find_call(pending["call_id"])
-            spec = REGISTRY[record["name"]]
+            spec = self._spec(record["name"])
             policy = self.engine.load()
             journal = self._journal()
             if kind == "recovery":
@@ -719,7 +878,7 @@ class AgentRuntime:
         if kind == "plan_approval":
             return f"План v{pending['version']} ждёт решения пользователя (план выведен выше; показать: plan show)."
         if kind == "recovery":
-            spec = REGISTRY[record["name"]]
+            spec = self._spec(record["name"])
             return (f"Неопределённый вызов после сбоя: {record['name']} id={record['id']}{where}.\n"
                     f"Он начался, но результат не был сохранён. Повтор: "
                     f"{'разрешён (инструмент идемпотентен)' if spec.retryable else 'запрещён (инструмент неповторяем)'}.\n"
