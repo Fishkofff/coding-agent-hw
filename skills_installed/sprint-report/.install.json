@@ -1,10 +1,10 @@
 {
  "name": "sprint-report",
- "version": "1.0.0",
+ "version": "1.1.0",
  "source": "study-market",
  "index": "market/index.json",
- "sha256": "7fad84f65a03743d943ebe3053c7331a90217e487400cc9095e6eab266b77bf5",
- "package_sha256": "068afa97cd5a135432ac351b863e891f8837d662a96fb6d792d82c271938f513",
- "fetched_at": "2026-11-27T11:18:48.737+00:00",
- "revision": "v1"
+ "sha256": "0a3780872a7b116b13c9471f82b324e12ad3c9d6a142c7569ea8a4e630df5aaa",
+ "package_sha256": "b0a2164968fa4c9c9a74f2bd67d3c659e47f2f15d23686eda4bb6ce50914a89e",
+ "fetched_at": "2026-11-27T18:26:13.946+00:00",
+ "revision": "v2"
 }

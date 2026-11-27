@@ -306,6 +306,7 @@ class AgentRuntime:
             return
         norm = usage.record(st["usage"], response.usage, estimated)
         self._event("model_response", usage=norm, usage_raw_available=response.usage is not None,
+                    tool_call_recovered_from_text=getattr(response, "recovered_from_text", False),
                     content=shorten(response.content or "", 2000),
                     tool_calls=[{"id": c.id, "name": c.name} for c in response.tool_calls])
         self.out.assistant(response.content)

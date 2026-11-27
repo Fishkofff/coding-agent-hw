@@ -27,6 +27,7 @@ class ModelResponse:
     content: str = ""
     tool_calls: list = field(default_factory=list)
     usage: dict | None = None
+    recovered_from_text: bool = False
 
 
 class OpenAICompatibleModel:
@@ -52,7 +53,7 @@ class OpenAICompatibleModel:
             try:
                 with urllib.request.urlopen(request, timeout=self.timeout) as response:
                     payload = json.loads(response.read().decode("utf-8"))
-                return self.parse(payload)
+                return recover_text_tool_call(self.parse(payload), tools)
             except urllib.error.HTTPError as exc:
                 detail = exc.read().decode("utf-8", errors="replace")[:500]
                 last_error = ModelError(f"HTTP {exc.code} from {url}: {detail}")
@@ -85,6 +86,38 @@ class OpenAICompatibleModel:
             calls.append(ToolCallRequest(id=str(raw.get("id") or ""), name=str(function.get("name") or ""),
                                          arguments=arguments if isinstance(arguments, str) else "{}"))
         return ModelResponse(content=content, tool_calls=calls, usage=payload.get("usage"))
+
+
+TOOL_TAG_RE = re.compile(r"<tool_call>\s*(.*?)\s*</tool_call>", re.DOTALL)
+FENCE_RE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.DOTALL)
+
+
+def recover_text_tool_call(response: ModelResponse, tools: list[dict]) -> ModelResponse:
+    if response.tool_calls or not response.content:
+        return response
+    names = {t["function"]["name"] for t in tools or []}
+    text = response.content.strip()
+    tagged = TOOL_TAG_RE.findall(text)
+    candidates = tagged or [FENCE_RE.sub(r"\1", text)]
+    calls = []
+    for index, candidate in enumerate(candidates):
+        try:
+            data = json.loads(candidate)
+        except ValueError:
+            return response
+        if not isinstance(data, dict) or data.get("name") not in names:
+            return response
+        arguments = data.get("arguments", data.get("parameters", {}))
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except ValueError:
+                return response
+        if not isinstance(arguments, dict):
+            return response
+        calls.append(ToolCallRequest(id=f"text-{index}-{abs(hash(candidate)) % 10**8}", name=data["name"],
+                                     arguments=json.dumps(arguments, ensure_ascii=False)))
+    return ModelResponse(content="", tool_calls=calls, usage=response.usage, recovered_from_text=True)
 
 
 class ScriptedModel:

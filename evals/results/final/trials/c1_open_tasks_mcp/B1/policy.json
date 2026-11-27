@@ -1,0 +1,89 @@
+{
+ "workspace": "workspace",
+ "runs_dir": "runs",
+ "commands": {
+  "allow": [
+   "python3 -m unittest -v",
+   "python3 -m unittest",
+   "python3 -m unittest test_order -v",
+   "ls",
+   "ls -la",
+   "pwd"
+  ],
+  "deny": [
+   "rm",
+   "sudo",
+   "curl",
+   "wget",
+   "git push",
+   "bash -c",
+   "sh -c",
+   "python3 -c",
+   "pip install"
+  ]
+ },
+ "directories": {
+  "allow": [
+   "workspace"
+  ],
+  "deny": [
+   "workspace/private"
+  ]
+ },
+ "bash": {
+  "timeout_sec": 30,
+  "max_output_bytes": 20000
+ },
+ "files": {
+  "max_read_bytes": 100000,
+  "max_write_bytes": 200000
+ },
+ "journal": {
+  "exclude": [
+   "__pycache__",
+   "*.pyc",
+   ".pytest_cache",
+   ".DS_Store"
+  ]
+ },
+ "budget": {
+  "model_calls": 20,
+  "tool_calls": 40,
+  "side_effects": 10,
+  "result_bytes": 200000
+ },
+ "skills": {
+  "dirs": [
+   "skills"
+  ]
+ },
+ "mcp": {
+  "servers": {
+   "tracker": {
+    "command": "/Users/daniilfiskov/IntelliJIDEAProjects/AgentsHW/.venv/bin/python3",
+    "args": [
+     "/Users/daniilfiskov/IntelliJIDEAProjects/AgentsHW/mcp_servers/tracker_server.py",
+     "--data",
+     "/Users/daniilfiskov/IntelliJIDEAProjects/AgentsHW/evals/results/final/trials/c1_open_tasks_mcp/B1/data/tracker.json"
+    ],
+    "cwd": "/Users/daniilfiskov/IntelliJIDEAProjects/AgentsHW/evals/results/final/trials/c1_open_tasks_mcp/B1",
+    "timeout_sec": 15,
+    "tools": {
+     "allow": [
+      "list_tasks",
+      "get_task"
+     ],
+     "deny": [
+      "update_task_status"
+     ]
+    },
+    "effects": {
+     "list_tasks": "read",
+     "get_task": "read",
+     "update_task_status": "write"
+    },
+    "env": {}
+   }
+  }
+ }
+}

@@ -1,0 +1,1 @@
+I fixed the calculation of the total order cost by correctly applying the discount percentage and added validation for the discount value. All tests passed successfully. The issue is resolved.

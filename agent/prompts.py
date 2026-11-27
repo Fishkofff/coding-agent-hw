@@ -33,9 +33,11 @@ Execution mode: {mode}: {mode_note}{skills}"""
 
 SKILLS_TEMPLATE = """
 
-Skills: a skill is a set of instructions for a particular type of work. Only names and descriptions are listed here.
-If the user's task matches a skill description, call load_skill with its name BEFORE doing the work and follow the loaded instructions.
-If no skill matches, work without a skill. Never load a skill that does not match the task.
+SKILLS (check this before your first tool call):
+A skill is a set of instructions for a particular type of work. It contains conventions and required steps that are often NOT written in the user's request.
+Only names and descriptions are listed below. Before doing anything else, compare the user's task with every description.
+- If a description matches the task, your FIRST tool call must be load_skill with that name; then follow the loaded instructions step by step.
+- If no description matches, do not load any skill and work without one.
 Available skills:
 {catalog}"""
 

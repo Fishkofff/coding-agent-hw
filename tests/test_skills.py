@@ -62,12 +62,12 @@ class SkillLoadingTest(unittest.TestCase):
         state = p.state(run_id)
         system = state["messages"][0]["content"]
         self.assertIn("sprint-report: Готовить отчёт", system)
-        self.assertNotIn("Посчитай задачи по статусам", system)
+        self.assertNotIn("Просроченная задача", system)
         first_request = rt.model.requests[0]
         self.assertIn("load_skill", first_request["tools"])
         result = tool_results(state)["s1"]
         self.assertTrue(result["ok"])
-        self.assertIn("Посчитай задачи по статусам", result["instructions"])
+        self.assertIn("Просроченная задача", result["instructions"])
         loaded = [e for e in events(p, run_id) if e["type"] == "skill_loaded"]
         self.assertEqual([e["data"]["name"] for e in loaded], ["sprint-report"])
 
@@ -111,7 +111,7 @@ class SkillLoadingTest(unittest.TestCase):
             SKILL_TEMPLATE.format(name="sprint-report", description="changed"), encoding="utf-8")
         p.runtime(steps).approve(run_id)
         result = tool_results(p.state(run_id))["s1"]
-        self.assertIn("Посчитай задачи по статусам", result["instructions"])
+        self.assertIn("Просроченная задача", result["instructions"])
 
 
 if __name__ == "__main__":

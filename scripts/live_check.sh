@@ -1,13 +1,23 @@
 #!/usr/bin/env bash
-set -u
+set -u -o pipefail
 cd "$(dirname "$0")/.."
 LOG=live_check.log
 : > "$LOG"
 say() { echo "$@" | tee -a "$LOG"; }
 
 say "== 1. модель доступна?"
-if ! curl -s -m 10 http://localhost:11434/v1/models | tee -a "$LOG" | grep -q qwen3; then
-  say "ОШИБКА: Ollama не отвечает или нет qwen3:4b. Запусти: ollama pull qwen3:4b && ollama serve"
+if ! python3 - <<'PY' 2>&1 | tee -a "$LOG"
+from agent.cli import load_dotenv, make_model
+from pathlib import Path
+import argparse
+load_dotenv(Path(".env"))
+model, info = make_model(argparse.Namespace(scripted=None))
+print("модель:", info)
+response = model.complete([{"role": "user", "content": "Ответь одним словом: работает?"}], [])
+print("ответ:", response.content, "usage:", response.usage)
+PY
+then
+  say "ОШИБКА: модель не отвечает, проверь .env"
   exit 1
 fi
 say ""

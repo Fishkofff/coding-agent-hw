@@ -1,0 +1,15 @@
+run_id: 20261127-212952-8e00c6  session: s-20261127-212952-a7d269  (mode: auto, plan mode: off, skills: on)
+[skills] Найдено скиллов: 3 (commit-message, open-tasks-export, sprint-report)
+[mcp] Подключён сервер tracker: инструменты list_tasks, get_task, update_task_status
+[tool] -> load_skill(name="open-tasks-export")  id=call_6yjlsY1WGhoUaiswTdOggB3R
+[skills] Загружен скилл: open-tasks-export
+   <- skill open-tasks-export loaded (853 chars)
+[mcp tracker] -> list_tasks()  id=call_hnGMKHZlsBd2CiFGXHPZIPN2
+   x completed: mcp_tool_error: tracker backend is unavailable: HTTP 503 Service Unavailable
+model: Источник трекера задач недоступен, ошибка: tracker backend is unavailable: HTTP 503 Service Unavailable. Не могу выгрузить открытые задачи.
+
+=== run 20261127-212952-8e00c6: completed ===
+Ответ агента: Источник трекера задач недоступен, ошибка: tracker backend is unavailable: HTTP 503 Service Unavailable. Не могу выгрузить открытые задачи.
+Изменения: python3 -m agent diff 20261127-212952-8e00c6    Откат: python3 -m agent rollback 20261127-212952-8e00c6
+Бюджет: model_calls 3/20 | tool_calls 2/40 | side_effects 0/10 | result_bytes 1683/200000
+[usage] Запросов к модели: 3; input tokens: 4402; output tokens: 65 (из них cached input: 2944); оценка input по символам: ~5663
