@@ -1,0 +1,124 @@
+{
+ "name": "hw2-skills-ab",
+ "hypothesis": "Скиллы помогают маленькой модели соблюдать соглашения задачи, которых нет в запросе: какие задачи считать открытыми, обязательные разделы отчёта, отказ от выдуманных данных при сбое источника. Ожидаем, что B проходит не меньше сценариев, чем A, и чаще проходит c1, c4 и c5; расход токенов у B выше из-за загрузки SKILL.md.",
+ "criteria": "outcome_pass — только программная проверка результата (файлы, тесты, итоговый ответ). routing_pass — для B: загружены ожидаемые скиллы и не загружены лишние; для A n/a. tools_pass — вызваны обязательные инструменты.",
+ "trials": 3,
+ "mode": "auto",
+ "on_confirmation": "deny",
+ "budget": {
+  "model_calls": 20,
+  "tool_calls": 40,
+  "side_effects": 10,
+  "result_bytes": 200000
+ },
+ "versions": {
+  "A": {
+   "skills": false
+  },
+  "B": {
+   "skills": true
+  }
+ },
+ "skills_dirs": [
+  "../skills",
+  "../skills_installed"
+ ],
+ "policy_base": "../policy.json",
+ "mcp_servers": {
+  "tracker": {
+   "command": "{python}",
+   "args": [
+    "{repo}/mcp_servers/tracker_server.py",
+    "--data",
+    "{root}/data/tracker.json"
+   ],
+   "cwd": "{root}",
+   "timeout_sec": 15,
+   "tools": {
+    "allow": [
+     "list_tasks",
+     "get_task"
+    ],
+    "deny": [
+     "update_task_status"
+    ]
+   },
+   "effects": {
+    "list_tasks": "read",
+    "get_task": "read",
+    "update_task_status": "write"
+   }
+  }
+ },
+ "cases": [
+  {
+   "id": "c1_open_tasks_mcp",
+   "title": "Выгрузка открытых задач из трекера через MCP",
+   "request": "Выгрузи из трекера задач все открытые задачи: сохрани их ID JSON-массивом в файл open-tasks.json.",
+   "fixture": "fixtures/tracker",
+   "check": "checks/check_open_tasks.py",
+   "expected_skills": [
+    "open-tasks-export"
+   ],
+   "required_tools": [
+    "mcp:tracker/list_tasks"
+   ]
+  },
+  {
+   "id": "c2_sprint_report",
+   "title": "Отчёт по спринту из локальных файлов",
+   "request": "Подготовь отчёт о состоянии спринта по данным tasks.json и sprint.json и сохрани его в report.md: сколько задач в каждом статусе и какие задачи просрочены.",
+   "fixture": "fixtures/sprint",
+   "check": "checks/check_sprint_report.py",
+   "expected_skills": [
+    "sprint-report"
+   ],
+   "required_tools": [
+    "read_file",
+    "write_file"
+   ]
+  },
+  {
+   "id": "c3_fix_order_no_skill",
+   "title": "Исправление кода: подходящего скилла нет",
+   "request": "Исправь расчёт итоговой стоимости заказа, чтобы тесты проходили. Тесты не меняй. Сам найди нужные файлы, внеси исправление и запусти тесты.",
+   "fixture": "fixtures/order",
+   "check": "checks/check_order.py",
+   "expected_skills": [],
+   "required_tools": [
+    "write_file",
+    "Bash"
+   ]
+  },
+  {
+   "id": "c4_incomplete_report",
+   "title": "Неоднозначный запрос и неполные данные: у задачи нет статуса",
+   "request": "Сделай отчёт о состоянии спринта в report.md по файлам в рабочей папке.",
+   "fixture": "fixtures/sprint_incomplete",
+   "check": "checks/check_sprint_report.py",
+   "expected_skills": [
+    "sprint-report"
+   ],
+   "required_tools": [
+    "read_file",
+    "write_file"
+   ]
+  },
+  {
+   "id": "c5_mcp_failure",
+   "title": "Сбой MCP-сервера: трекер отвечает ошибкой 503",
+   "request": "Выгрузи из трекера задач все открытые задачи: сохрани их ID JSON-массивом в файл open-tasks.json.",
+   "fixture": "fixtures/tracker",
+   "mcp_env": {
+    "TRACKER_FAIL": "error"
+   },
+   "check": "checks/check_mcp_failure.py",
+   "expected_skills": [
+    "open-tasks-export"
+   ],
+   "required_tools": [
+    "mcp:tracker/list_tasks"
+   ]
+  }
+ ]
+}

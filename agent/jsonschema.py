@@ -24,7 +24,7 @@ def validate(instance, schema: dict, path: str = "$") -> list[str]:
     expected = schema.get("type")
     if expected is not None:
         types = expected if isinstance(expected, list) else [expected]
-        if not any(_TYPE_CHECKS[t](instance) for t in types):
+        if not any(_TYPE_CHECKS.get(t, lambda v: True)(instance) for t in types):
             return [f"{path}: expected {expected}, got {_type_name(instance)}"]
 
     errors: list[str] = []

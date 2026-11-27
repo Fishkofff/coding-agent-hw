@@ -26,6 +26,9 @@ class ToolSpec:
     effect: str
     retryable: bool
     phases: frozenset
+    kind: str = "builtin"
+    server: str | None = None
+    remote: str | None = None
 
     @property
     def side_effect(self) -> bool:
@@ -98,8 +101,45 @@ COMPLETE_TASK = ToolSpec(
     effect="control", retryable=True, phases=frozenset({EXECUTION}),
 )
 
+LOAD_SKILL = ToolSpec(
+    name="load_skill",
+    description=("Load the full instructions (SKILL.md) of one skill from the skill catalog in the system prompt. "
+                 "Call it before doing the work when the user's task matches the skill description; then follow "
+                 "its steps. Do not load skills that do not match the task."),
+    parameters=_object({"name": {"type": "string", "minLength": 1, "description": "Skill name from the catalog"}},
+                       ["name"]),
+    effect="read", retryable=True, phases=frozenset({PLANNING, EXECUTION}), kind="skill",
+)
+
+MARKET_SEARCH = ToolSpec(
+    name="market_search",
+    description=("Search the connected skill market for skills that are NOT installed yet. Use it when no installed "
+                 "skill fits the task. Returns names, versions and descriptions; nothing is installed."),
+    parameters=_object({"query": {"type": "string", "minLength": 1, "description": "What the task is about"}}, ["query"]),
+    effect="read", retryable=True, phases=frozenset({PLANNING, EXECUTION}), kind="market",
+)
+MARKET_INSTALL = ToolSpec(
+    name="market_install",
+    description=("Install one skill found with market_search. The runtime downloads it, checks its hash and format "
+                 "and adds it to the skill catalog; then call load_skill with its name."),
+    parameters=_object({"source": {"type": "string", "minLength": 1}, "name": {"type": "string", "minLength": 1}},
+                       ["source", "name"]),
+    effect="write", retryable=True, phases=frozenset({EXECUTION}), kind="market",
+)
+
 REGISTRY = {spec.name: spec for spec in (BASH, LIST_FILES, READ_FILE, WRITE_FILE, DELETE_FILE, SUBMIT_PLAN, COMPLETE_TASK)}
 WORK_TOOL_NAMES = frozenset({"Bash", "list_files", "read_file", "write_file", "delete_file", "complete_task"})
+
+
+def mcp_spec(entry: dict, effect: str) -> ToolSpec:
+    phases = frozenset({PLANNING, EXECUTION}) if effect == "read" else frozenset({EXECUTION})
+    return ToolSpec(
+        name=entry["exposed"],
+        description=f"[MCP server {entry['server']}, tool {entry['tool']}] {entry['description']}".strip(),
+        parameters=entry["input_schema"],
+        effect=effect, retryable=effect == "read", phases=phases,
+        kind="mcp", server=entry["server"], remote=entry["tool"],
+    )
 
 
 def offered_tools(phase: str, has_tasks: bool) -> list[ToolSpec]:

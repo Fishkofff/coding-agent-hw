@@ -1,0 +1,15 @@
+{
+ "sources": {
+  "study-market": {
+   "last_check": "2026-11-27T18:26:13.945904+00:00",
+   "revision": "v2",
+   "seen": {
+    "sprint-report": "1.1.0",
+    "workload-summary": "1.0.0",
+    "standup-notes": "1.0.0",
+    "broken-example": "1.0.0"
+   }
+  }
+ },
+ "settings": {}
+}

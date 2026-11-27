@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Агент: диалог, скиллы, MCP, маркет, evals</title>
+<style>
+:root { --bg:#f6f7f9; --card:#fff; --line:#dde1e6; --ink:#1d232b; --muted:#68717d; --accent:#2f5bd3; --ok:#1d7a46; --bad:#b3261e; --warn:#9a6200; }
+* { box-sizing:border-box; }
+body { margin:0; font:14px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif; color:var(--ink); background:var(--bg); }
+header { display:flex; align-items:center; gap:16px; padding:10px 18px; background:#1d232b; color:#fff; }
+header b { font-size:15px; }
+header .model { color:#aab3bf; font-size:12px; margin-left:auto; }
+nav button { background:none; border:0; color:#cfd5dc; padding:6px 10px; cursor:pointer; font-size:14px; border-radius:6px; }
+nav button.active { background:#39424e; color:#fff; }
+main { padding:16px 18px; }
+.tab { display:none; } .tab.active { display:block; }
+.grid { display:grid; grid-template-columns:260px 1fr 380px; gap:14px; height:calc(100vh - 90px); }
+.card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px; overflow:auto; }
+h3 { margin:0 0 8px; font-size:14px; }
+.sessions div { padding:6px 8px; border-radius:6px; cursor:pointer; }
+.sessions div.active, .sessions div:hover { background:#eef2fb; }
+.small { color:var(--muted); font-size:12px; }
+.msg { margin:8px 0; padding:8px 10px; border-radius:8px; white-space:pre-wrap; }
+.msg.user { background:#eef2fb; }
+.msg.agent { background:#f1f8f3; }
+.msg.err { background:#fdeceb; }
+.pending { border:1px solid var(--warn); background:#fff8e8; border-radius:8px; padding:8px; margin:8px 0; white-space:pre-wrap; font-family:ui-monospace, Menlo, monospace; font-size:12px; }
+textarea, input, select { font:inherit; padding:6px 8px; border:1px solid var(--line); border-radius:6px; }
+textarea { width:100%; height:70px; resize:vertical; }
+button.act { background:var(--accent); color:#fff; border:0; border-radius:6px; padding:6px 12px; cursor:pointer; }
+button.sec { background:#e7ebf0; border:0; border-radius:6px; padding:6px 12px; cursor:pointer; }
+button.danger { background:var(--bad); color:#fff; border:0; border-radius:6px; padding:6px 12px; cursor:pointer; }
+.ev { font-family:ui-monospace, Menlo, monospace; font-size:11.5px; border-bottom:1px solid #f0f2f4; padding:3px 0; }
+.ev .t { color:var(--accent); font-weight:600; }
+.ev.bad .t { color:var(--bad); }
+table { border-collapse:collapse; width:100%; font-size:12.5px; }
+th, td { border-bottom:1px solid var(--line); padding:4px 6px; text-align:left; vertical-align:top; }
+pre { white-space:pre-wrap; font-size:12px; background:#f7f8fa; padding:8px; border-radius:6px; }
+.row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:6px 0; }
+.two { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+.pass { color:var(--ok); font-weight:600; } .fail { color:var(--bad); font-weight:600; }
+</style>
+</head>
+<body>
+<header>
+  <b>Агент ДЗ2</b>
+  <nav>
+    <button data-tab="chat" class="active">Диалог</button>
+    <button data-tab="stats">Статистика и доктор</button>
+    <button data-tab="tools">Скиллы и MCP</button>
+    <button data-tab="market">Маркет</button>
+    <button data-tab="evals">Evals</button>
+  </nav>
+  <span class="model" id="model"></span>
+</header>
+<main>
+<section class="tab active" id="tab-chat">
+  <div class="grid">
+    <div class="card">
+      <h3>Сессии</h3>
+      <div class="row"><button class="act" onclick="newSession(true)">Новая (B, скиллы)</button><button class="sec" onclick="newSession(false)">Новая (A)</button></div>
+      <div class="sessions" id="sessions"></div>
+    </div>
+    <div class="card" style="display:flex;flex-direction:column">
+      <h3 id="sessionTitle">Выберите или создайте сессию</h3>
+      <div id="messages" style="flex:1;overflow:auto"></div>
+      <div id="pending"></div>
+      <div class="row">
+        <select id="mode"><option value="safe">safe</option><option value="auto">auto</option></select>
+        <span class="small" id="busy"></span>
+      </div>
+      <textarea id="input" placeholder="Сообщение агенту (Ctrl+Enter — отправить)"></textarea>
+      <div class="row"><button class="act" onclick="send()">Отправить</button></div>
+    </div>
+    <div class="card">
+      <h3>События по мере работы</h3>
+      <div id="events"></div>
+    </div>
+  </div>
+</section>
+
+<section class="tab" id="tab-stats">
+  <div class="two">
+    <div class="card"><h3>Статистика сессии</h3><div class="row"><button class="sec" onclick="loadStats()">Обновить</button></div><div id="stats"></div></div>
+    <div class="card"><h3>Доктор</h3><div class="row"><button class="act" onclick="loadDoctor()">Разобрать сессию</button></div><div id="doctor"></div></div>
+  </div>
+</section>
+
+<section class="tab" id="tab-tools">
+  <div class="two">
+    <div class="card"><h3>Скиллы</h3><div id="skills"></div></div>
+    <div class="card"><h3>MCP-серверы и инструменты</h3><div class="row"><button class="sec" onclick="loadMcp()">Подключиться и показать инструменты</button></div><div id="mcp"></div>
+      <h3 style="margin-top:14px">Подключить или изменить сервер</h3>
+      <div class="row"><input id="mName" placeholder="имя (tracker)"><input id="mCmd" placeholder="команда (python3, npx)"></div>
+      <div class="row"><input id="mArgs" style="width:100%" placeholder="аргументы через пробел"></div>
+      <div class="row"><input id="mAllow" style="width:48%" placeholder="tools.allow через запятую"><input id="mDeny" style="width:48%" placeholder="tools.deny через запятую"></div>
+      <div class="row"><input id="mRead" style="width:100%" placeholder="инструменты только для чтения (effects=read) через запятую"></div>
+      <div class="row"><button class="act" onclick="saveMcp(false)">Сохранить в policy</button><button class="danger" onclick="saveMcp(true)">Удалить сервер</button></div>
+    </div>
+  </div>
+</section>
+
+<section class="tab" id="tab-market">
+  <div class="two">
+    <div class="card"><h3>Источники и автообновление</h3><div class="row"><button class="act" onclick="marketCheck()">Проверить маркет сейчас</button></div><div id="sources"></div>
+      <h3 style="margin-top:14px">Установлено</h3><div id="installed"></div>
+      <h3 style="margin-top:14px">Новинки (не установлены)</h3><div id="available"></div></div>
+    <div class="card"><h3>Кандидаты обновлений и проверка через eval</h3><div id="candidates"></div>
+      <h3 style="margin-top:14px">Решения по обновлениям</h3><div id="updates"></div>
+      <h3 style="margin-top:14px">События маркета</h3><div id="mevents"></div></div>
+  </div>
+</section>
+
+<section class="tab" id="tab-evals">
+  <div class="two">
+    <div class="card"><h3>Запуск eval A/B</h3>
+      <div class="row"><input id="eOut" value="evals/results/ui-run" style="width:60%"><input id="eTrials" type="number" min="1" value="3" style="width:70px"><input id="eOnly" placeholder="сценарии через запятую (пусто — все)"></div>
+      <div class="row"><button class="act" onclick="runEval()">Запустить</button></div>
+      <h3 style="margin-top:14px">Задачи в фоне</h3><div id="jobs"></div>
+      <h3 style="margin-top:14px">Результаты и сравнение версий</h3><div id="evalList"></div></div>
+    <div class="card"><h3>Сводка</h3><div id="evalDetail" class="small">Выберите результат слева</div></div>
+  </div>
+</section>
+</main>
+<script>
+let current = null, after = 0;
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+async function api(path, body) {
+  const r = await fetch("/api/" + path, body === undefined ? {} : {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)});
+  const data = await r.json();
+  if (!r.ok) { alert(data.error); throw new Error(data.error); }
+  return data;
+}
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("nav button").forEach(x => x.classList.remove("active"));
+  document.querySelectorAll(".tab").forEach(x => x.classList.remove("active"));
+  b.classList.add("active"); $("tab-" + b.dataset.tab).classList.add("active");
+  ({stats: loadStats, tools: loadTools, market: loadMarket, evals: loadEvals})[b.dataset.tab]?.();
+});
+$("input").addEventListener("keydown", e => { if (e.key === "Enter" && e.ctrlKey) send(); });
+
+async function loadOverview() {
+  const o = await api("overview");
+  $("model").textContent = o.model ? `модель: ${o.model.model || o.model.kind} · ${o.model.base_url || ""}` : "модель не настроена";
+  $("sessions").innerHTML = o.sessions.map(s => `<div class="${s.session_id === current ? "active" : ""}" onclick="openSession('${s.session_id}')"><div>${esc(s.title)}</div><div class="small">${s.session_id} · runs ${s.runs}</div></div>`).join("");
+}
+async function newSession(skills) { const s = await api("sessions", {skills}); await openSession(s.session_id); }
+async function openSession(id) { current = id; after = 0; $("events").innerHTML = ""; await refresh(); await loadOverview(); }
+async function send() {
+  if (!current) await newSession(true);
+  const text = $("input").value.trim(); if (!text) return;
+  $("input").value = ""; await api(`sessions/${current}/message`, {text, mode:$("mode").value}); refresh();
+}
+async function decide(approve) {
+  const reason = approve ? null : prompt("Причина отказа (её увидит модель)") || null;
+  await api(`sessions/${current}/decision`, {approve, reason}); refresh();
+}
+function eventLine(e) {
+  const d = e.data, bad = d.ok === false || /error|failed|invalid/.test(e.type);
+  let text = "";
+  if (e.type === "tool_call") text = d.kind === "mcp" ? `MCP ${d.server}/${d.tool} ${JSON.stringify(d.arguments)}` : `${d.name} ${JSON.stringify(d.arguments)}`;
+  else if (e.type === "tool_result") text = `${d.name}: ${d.status}${d.error ? " " + d.error : ""}`;
+  else if (e.type === "skill_loaded") text = d.name;
+  else if (e.type === "model_response") text = d.usage ? `in ${d.usage.input_tokens} / out ${d.usage.output_tokens}` : "usage unknown";
+  else if (e.type === "skills_discovered") text = `${d.count}: ${d.skills.map(s => s.name).join(", ")}`;
+  else text = JSON.stringify(d).slice(0, 160);
+  return `<div class="ev ${bad ? "bad" : ""}"><span class="t">${e.type}</span> ${esc(text.slice(0, 220))} <span class="small">${e.id}</span></div>`;
+}
+async function refresh() {
+  if (!current) return;
+  const s = await api(`sessions/${current}`);
+  $("sessionTitle").textContent = `Сессия ${current} · скиллы ${s.session.skills_enabled === false ? "выкл (A)" : "вкл (B)"}`;
+  $("messages").innerHTML = s.runs.map(r => `<div class="msg user">${esc(r.task)}</div>` + (r.final_answer ? `<div class="msg agent">${esc(r.final_answer)}</div>` : r.status !== "running" && r.status !== "waiting" ? `<div class="msg err">run ${r.run_id}: ${r.status} ${esc(r.error?.message || "")}</div>` : "")).join("");
+  $("pending").innerHTML = s.pending ? `<div class="pending">${esc(s.pending.details)}\n<button class="act" onclick="decide(true)">Разрешить</button> <button class="danger" onclick="decide(false)">Отклонить</button></div>` : "";
+  $("busy").textContent = s.busy ? "агент работает…" : "";
+  const ev = await api(`sessions/${current}/events?after=${after}`);
+  after = ev.total;
+  $("events").insertAdjacentHTML("beforeend", ev.events.map(eventLine).join(""));
+  if (ev.events.length) $("events").scrollTop = 1e9;
+}
+setInterval(() => { refresh(); loadJobs(); }, 1500);
+
+function kv(obj) { return Object.entries(obj || {}).map(([k, v]) => `${esc(k)}: <b>${esc(v)}</b>`).join("<br>") || "-"; }
+function usageText(u) { return u.status === "unknown" ? "unknown" : `in ${u.input_tokens} / out ${u.output_tokens}${u.status === "partial" ? " (неполные)" : ""}${u.cached_input_tokens ? `, cached ${u.cached_input_tokens}` : ""}`; }
+async function loadStats() {
+  if (!current) return $("stats").textContent = "нет сессии";
+  const s = await api(`sessions/${current}/stats`);
+  $("stats").innerHTML = `<p>Загрузки скиллов (уникальных ${s.unique_skills}):<br>${kv(s.skill_loads)}</p><p>Вызовы инструментов (уникальных ${s.unique_tools}):<br>${kv(s.tool_calls)}</p><p>MCP по серверу/инструменту:<br>${kv(s.mcp_calls)}</p><p>Исходы: ${kv(s.outcomes)}</p><p>Токены по run:<br>${Object.entries(s.usage_by_run).map(([r, u]) => `${r}: ${usageText(u)} · запросов ${u.requests}`).join("<br>")}</p><p>Итого: <b>${usageText(s.usage_total)}</b></p><p>Ошибки и отказы: ${s.errors.length}<br>${s.errors.slice(-10).map(e => `${e.event_id} ${esc(e.tool || "")} ${e.status} ${esc(e.error)}`).join("<br>")}</p>`;
+}
+async function loadDoctor() {
+  if (!current) return;
+  const d = await api(`sessions/${current}/doctor`);
+  $("doctor").innerHTML = `<p class="small">Доктор по правилам, собственный расход: 0 запросов к модели.</p>` +
+    d.costs.map(c => `<div class="small">${c.run_id}: ${usageText(c.usage)}; вызовы ${JSON.stringify(c.tool_calls_by_category)}</div>`).join("") +
+    (d.findings.length ? d.findings.map((f, i) => `<div class="pending" style="font-family:inherit"><b>Находка ${i + 1}: ${f.rule}</b>\nrun_id: ${f.run_id}\nсобытия: ${f.event_ids.join(", ")}\nсчётчики: ${JSON.stringify(f.counts)}\n${esc(f.interpretation)}\n<b>Предложение:</b> ${esc(f.suggestion)}</div>`).join("") : "<p>Находок нет</p>") +
+    (d.limitations.length ? `<p class="small">Ограничения: ${d.limitations.map(esc).join("<br>")}</p>` : "");
+}
+async function loadTools() {
+  const s = await api("skills");
+  $("skills").innerHTML = `<table><tr><th>вкл</th><th>скилл</th><th>описание</th></tr>${s.skills.map(k => `<tr><td><input type="checkbox" ${k.enabled ? "checked" : ""} onchange="api('skills', {name:'${k.name}', enabled:this.checked})"></td><td>${k.name}</td><td>${esc(k.description)}</td></tr>`).join("")}</table>` + s.errors.map(e => `<div class="fail small">${esc(e.path)}: ${esc(e.error)}</div>`).join("");
+}
+async function loadMcp() {
+  const m = await api("mcp");
+  $("mcp").innerHTML = m.servers.map(s => `<p><b>${s.name}</b> ${s.enabled ? "" : "(выключен)"} <span class="small">${esc(s.command)} ${esc(s.args.join(" "))}; allow ${s.allow.join(", ")}; deny ${s.deny.join(", ") || "-"}</span></p>`).join("") +
+    `<table><tr><th>инструмент</th><th>эффект</th><th>доступ</th><th>описание</th></tr>${m.tools.map(t => `<tr><td>${t.server}/${t.tool}</td><td>${t.effect}</td><td class="${t.offered ? "pass" : "fail"}">${t.offered ? "разрешён" : "запрещён"}</td><td>${esc(t.description)}</td></tr>`).join("")}</table>` +
+    m.errors.map(e => `<div class="fail small">${e.server}: ${esc(e.error)}</div>`).join("");
+}
+async function saveMcp(remove) {
+  const list = id => $(id).value.split(",").map(x => x.trim()).filter(Boolean);
+  const effects = {}; list("mRead").forEach(t => effects[t] = "read");
+  await api("mcp", {name:$("mName").value, command:$("mCmd").value, args:$("mArgs").value.split(" ").filter(Boolean), allow:list("mAllow"), deny:list("mDeny"), effects, remove});
+  loadMcp();
+}
+async function loadMarket() {
+  const m = await api("market");
+  $("sources").innerHTML = Object.entries(m.sources).map(([name, s]) => `<p><b>${name}</b> <span class="small">${esc(s.settings.index)} · последняя проверка ${s.state.last_check || "-"} · ревизия ${s.state.revision || "-"}</span><br>` +
+    ["check", "auto_update", "verify_updates"].map(k => `<label><input type="checkbox" ${s.settings[k] ? "checked" : ""} onchange="api('market/settings', {source:'${name}', key:'${k}', value:this.checked})"> ${k}</label>`).join(" &nbsp; ") + "</p>").join("");
+  $("installed").innerHTML = Object.entries(m.installed).map(([n, i]) => `<div>${n} <b>${i.version}</b> <span class="small">${i.source} · sha ${i.sha256.slice(0, 12)}</span> <button class="sec" onclick="api('market/rollback', {skill:'${n}'}).then(loadMarket)">откат</button></div>`).join("") || "-";
+  $("available").innerHTML = m.available.map(a => a.error ? `<div class="fail">${esc(a.error)}</div>` : `<div>${a.source}/${a.name} ${a.version} <span class="small">${esc(a.description)}</span> <button class="sec" onclick="api('market/install', {source:'${a.source}', name:'${a.name}'}).then(loadMarket)">установить</button></div>`).join("") || "-";
+  $("candidates").innerHTML = m.candidates.map(c => `<div>${c.name} ${c.version} <span class="small">${esc(c.path)}</span><div class="row"><input id="vt-${c.name}" type="number" min="1" value="3" style="width:60px"> trials <button class="act" onclick="api('market/verify', {skill:'${c.name}', trials:+$('vt-${c.name}').value}).then(()=>alert('проверка запущена, см. Evals → задачи'))">проверить через eval</button></div></div>`).join("") || "нет кандидатов";
+  $("updates").innerHTML = m.updates.map(u => `<div><b class="${u.decision === "accepted" ? "pass" : "fail"}">${u.decision}</b> ${u.skill} ${u.old_version} → ${u.new_version}<br><span class="small">${esc(u.reason)}</span></div>`).join("") || "-";
+  $("mevents").innerHTML = m.events.slice().reverse().map(e => `<div class="ev"><span class="t">${e.type}</span> ${esc(JSON.stringify(e.data).slice(0, 200))} <span class="small">${e.time}</span></div>`).join("");
+}
+async function marketCheck() { await api("market/check", {force:true}); loadMarket(); }
+async function runEval() {
+  const only = $("eOnly").value.split(",").map(x => x.trim()).filter(Boolean);
+  await api("evals", {out:$("eOut").value, trials:+$("eTrials").value, only: only.length ? only : null}); loadJobs();
+}
+async function loadJobs() {
+  if (!$("tab-evals").classList.contains("active")) return;
+  const j = await api("jobs");
+  $("jobs").innerHTML = Object.entries(j).map(([id, job]) => `<div><b>${id}</b> ${esc(job.name)}: ${esc(job.status)}<pre>${esc(job.lines.slice(-8).join("\n"))}</pre></div>`).join("") || "-";
+}
+async function loadEvals() {
+  const list = await api("evals");
+  $("evalList").innerHTML = list.map(e => `<div><a href="#" onclick="evalDetail('${e.path}');return false">${esc(e.path)}</a> <span class="small">${e.rows} trials · ${Object.entries(e.by_version).map(([v, x]) => `${v} ${x}`).join(" · ")}</span></div>`).join("") || "-";
+  loadJobs();
+}
+async function evalDetail(path) {
+  const d = await api("evals/detail?path=" + encodeURIComponent(path));
+  const rows = d.rows.map(r => `<tr><td>${r.case_id}</td><td>${r.version}${r.trial}</td><td class="${r.outcome_pass ? "pass" : "fail"}">${r.outcome_pass}</td><td>${r.routing_pass_or_na}</td><td>${r.input_tokens ?? "-"}/${r.output_tokens ?? "-"}</td><td>${(r.skill_activations || []).join(", ") || "-"}</td><td>${r.mcp_calls}</td><td>${esc(r.error || "-")}</td><td class="small">${esc(r.events)}</td></tr>`).join("");
+  $("evalDetail").innerHTML = (d.decision ? `<pre>${esc(d.decision.split("---")[0])}</pre>` : "") + `<table><tr><th>сценарий</th><th>trial</th><th>outcome</th><th>routing</th><th>токены</th><th>скиллы</th><th>MCP</th><th>ошибка</th><th>журнал</th></tr>${rows}</table><pre>${esc(d.summary.split("## Все trials")[0])}</pre>`;
+}
+loadOverview();
+</script>
+</body>
+</html>

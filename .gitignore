@@ -16,3 +16,6 @@ venv/
 .idea/
 *.iml
 .DS_Store
+
+# логи ручных проверок
+live_check.log

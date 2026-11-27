@@ -1,5 +1,5 @@
 {
-  "description": "Policy агента. Пути считаются от каталога этого файла. Запрет сильнее разрешения; всё, что явно не разрешено, запрещено. Файл лежит вне workspace, инструменты агента не могут его изменить.",
+  "description": "Policy агента. Пути считаются от каталога этого файла. Запрет сильнее разрешения; всё, что явно не разрешено, запрещено. Файл лежит вне workspace, инструменты агента не могут его изменить. Скиллы не меняют разрешения; MCP-инструменты проходят ту же проверку: сервер должен быть описан здесь, инструмент — в tools.allow и не в tools.deny.",
   "workspace": "workspace",
   "runs_dir": ".agent_runs",
   "commands": {
@@ -24,8 +24,13 @@
     ]
   },
   "directories": {
-    "allow": ["workspace"],
-    "deny": ["workspace/private", "workspace/.git"]
+    "allow": [
+      "workspace"
+    ],
+    "deny": [
+      "workspace/private",
+      "workspace/.git"
+    ]
   },
   "bash": {
     "timeout_sec": 30,
@@ -36,12 +41,69 @@
     "max_write_bytes": 200000
   },
   "journal": {
-    "exclude": ["__pycache__", "*.pyc", ".pytest_cache", ".DS_Store"]
+    "exclude": [
+      "__pycache__",
+      "*.pyc",
+      ".pytest_cache",
+      ".DS_Store"
+    ]
   },
   "budget": {
     "model_calls": 40,
     "tool_calls": 80,
     "side_effects": 20,
     "result_bytes": 300000
+  },
+  "skills": {
+    "dirs": [
+      "skills"
+    ],
+    "disabled": []
+  },
+  "mcp": {
+    "servers": {
+      "tracker": {
+        "description": "Свой MCP-сервер учебного трекера (stdio, stdlib Python)",
+        "enabled": true,
+        "command": "python3",
+        "args": [
+          "mcp_servers/tracker_server.py",
+          "--data",
+          "data/tracker.json"
+        ],
+        "cwd": ".",
+        "env": {},
+        "timeout_sec": 15,
+        "max_result_bytes": 50000,
+        "tools": {
+          "allow": [
+            "list_tasks",
+            "get_task"
+          ],
+          "deny": [
+            "update_task_status"
+          ]
+        },
+        "effects": {
+          "list_tasks": "read",
+          "get_task": "read",
+          "update_task_status": "write"
+        }
+      }
+    }
+  },
+  "market": {
+    "install_dir": "skills_installed",
+    "agent_install": true,
+    "sources": {
+      "study-market": {
+        "description": "Учебный маркет скиллов: локальный реестр market/index.json (может быть и https-адрес, например raw-файл Git-репозитория)",
+        "index": "market/index.json",
+        "check": true,
+        "auto_update": true,
+        "verify_updates": true,
+        "interval_minutes": 60
+      }
+    }
   }
 }

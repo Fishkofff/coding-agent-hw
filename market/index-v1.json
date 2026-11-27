@@ -1,0 +1,26 @@
+{
+  "market": "study-market",
+  "revision": "v1",
+  "skills": [
+    {
+      "name": "sprint-report",
+      "version": "1.0.0",
+      "description": "Отчёт о состоянии спринта: статусы, просрочки, неполные данные.",
+      "path": "packages/sprint-report/1.0.0",
+      "files": [
+        "SKILL.md"
+      ],
+      "sha256": "7fad84f65a03743d943ebe3053c7331a90217e487400cc9095e6eab266b77bf5"
+    },
+    {
+      "name": "workload-summary",
+      "version": "1.0.0",
+      "description": "Нагрузка исполнителей по учебному трекеру: сколько незакрытых задач у каждого.",
+      "path": "packages/workload-summary/1.0.0",
+      "files": [
+        "SKILL.md"
+      ],
+      "sha256": "9bbd4efa26d6f3b8f7d4ff1862c01cb076dee55f357e78dbf88b4b05f86444e8"
+    }
+  ]
+}

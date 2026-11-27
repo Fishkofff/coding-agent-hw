@@ -1,0 +1,7 @@
+{"steps": [
+ {"tool_calls": [{"id": "b1", "name": "load_skill", "arguments": {"name": "open-tasks-export"}}]},
+ {"tool_calls": [{"id": "b2", "name": "mcp__tracker__list_tasks", "arguments": {}}]},
+ {"tool_calls": [{"id": "b3", "name": "write_file", "arguments": {"path": "open-tasks.json", "content": "[\"T1\", \"T3\", \"T4\", \"T6\", \"T7\"]"}}]},
+ {"tool_calls": [{"id": "b4", "name": "read_file", "arguments": {"path": "open-tasks.json"}}]},
+ {"content": "Сохранил 5 незакрытых задач."}
+]}

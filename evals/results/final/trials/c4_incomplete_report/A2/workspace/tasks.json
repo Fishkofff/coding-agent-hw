@@ -1,0 +1,11 @@
+[
+  {"id": "T1", "title": "Настроить CI для домашки", "status": "open", "assignee": "anna", "due": "2026-11-18"},
+  {"id": "T2", "title": "Написать тесты policy", "status": "closed", "assignee": "boris", "due": "2026-11-15"},
+  {"id": "T3", "title": "Подключить MCP-сервер", "status": "in_progress", "assignee": "anna", "due": "2026-11-25"},
+  {"id": "T4", "title": "Оформить README", "status": "open", "assignee": "dania", "due": "2026-11-30"},
+  {"id": "T5", "title": "Собрать сводку eval", "status": "closed", "assignee": "dania", "due": "2026-11-20"},
+  {"id": "T6", "title": "Разобрать журнал событий", "status": "in_progress", "assignee": "boris", "due": "2026-11-19"},
+  {"id": "T7", "title": "Подготовить демо", "status": "open", "assignee": "boris", "due": "2026-11-28"},
+  {"id": "T8", "title": "Уточнить требования к отчёту", "assignee": "anna", "due": "2026-11-17"},
+  {"id": "T9", "title": "Проверить ссылки в README", "status": "open", "assignee": "dania"}
+]

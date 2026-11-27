@@ -1,0 +1,1 @@
+{"steps": [{"tool_calls": [{"id": "g0", "name": "load_skill", "arguments": {"name": "open-tasks-export"}}]}, {"tool_calls": [{"id": "g1", "name": "mcp__tracker__list_tasks", "arguments": {}}]}, {"content": "Трекер недоступен (HTTP 503), файл не создан."}]}

@@ -27,15 +27,19 @@ class ModelResponse:
     content: str = ""
     tool_calls: list = field(default_factory=list)
     usage: dict | None = None
+    recovered_from_text: bool = False
 
 
 class OpenAICompatibleModel:
     def __init__(self, base_url: str, api_key: str, model: str, *, timeout: float = 300.0,
-                 temperature: float = 0.0, max_retries: int = 2):
+                 temperature: float = 0.0, max_retries: int = 2, no_think: bool = False):
         self.base_url, self.api_key, self.model = base_url, api_key or "none", model
         self.timeout, self.temperature, self.max_retries = timeout, temperature, max_retries
+        self.no_think = no_think
 
     def complete(self, messages: list[dict], tools: list[dict]) -> ModelResponse:
+        if self.no_think and messages and messages[0].get("role") == "system":
+            messages = [dict(messages[0], content=messages[0]["content"] + "\n/no_think")] + messages[1:]
         body = {"model": self.model, "messages": messages, "temperature": self.temperature}
         if tools:
             body["tools"] = tools
@@ -49,7 +53,7 @@ class OpenAICompatibleModel:
             try:
                 with urllib.request.urlopen(request, timeout=self.timeout) as response:
                     payload = json.loads(response.read().decode("utf-8"))
-                return self.parse(payload)
+                return recover_text_tool_call(self.parse(payload), tools)
             except urllib.error.HTTPError as exc:
                 detail = exc.read().decode("utf-8", errors="replace")[:500]
                 last_error = ModelError(f"HTTP {exc.code} from {url}: {detail}")
@@ -84,6 +88,38 @@ class OpenAICompatibleModel:
         return ModelResponse(content=content, tool_calls=calls, usage=payload.get("usage"))
 
 
+TOOL_TAG_RE = re.compile(r"<tool_call>\s*(.*?)\s*</tool_call>", re.DOTALL)
+FENCE_RE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.DOTALL)
+
+
+def recover_text_tool_call(response: ModelResponse, tools: list[dict]) -> ModelResponse:
+    if response.tool_calls or not response.content:
+        return response
+    names = {t["function"]["name"] for t in tools or []}
+    text = response.content.strip()
+    tagged = TOOL_TAG_RE.findall(text)
+    candidates = tagged or [FENCE_RE.sub(r"\1", text)]
+    calls = []
+    for index, candidate in enumerate(candidates):
+        try:
+            data = json.loads(candidate)
+        except ValueError:
+            return response
+        if not isinstance(data, dict) or data.get("name") not in names:
+            return response
+        arguments = data.get("arguments", data.get("parameters", {}))
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except ValueError:
+                return response
+        if not isinstance(arguments, dict):
+            return response
+        calls.append(ToolCallRequest(id=f"text-{index}-{abs(hash(candidate)) % 10**8}", name=data["name"],
+                                     arguments=json.dumps(arguments, ensure_ascii=False)))
+    return ModelResponse(content="", tool_calls=calls, usage=response.usage, recovered_from_text=True)
+
+
 class ScriptedModel:
     def __init__(self, steps: list):
         self.steps = list(steps)
@@ -114,4 +150,4 @@ def _step_from_json(step: dict) -> ModelResponse:
         if not isinstance(arguments, str):
             arguments = json.dumps(arguments, ensure_ascii=False)
         calls.append(ToolCallRequest(id=raw.get("id", ""), name=raw["name"], arguments=arguments))
-    return ModelResponse(content=step.get("content", ""), tool_calls=calls)
+    return ModelResponse(content=step.get("content", ""), tool_calls=calls, usage=step.get("usage"))
