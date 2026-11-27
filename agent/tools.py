@@ -1,7 +1,3 @@
-"""Инструменты агента: описание для модели (имя, описание, JSON Schema) и исполнитель.
-
-Исполнитель получает только вызовы, уже прошедшие проверки runtime (CheckedCall).
-"""
 from __future__ import annotations
 
 import os
@@ -76,7 +72,6 @@ WRITE_FILE = ToolSpec(
     description="Create or overwrite a text file in the workspace with its FULL new content.",
     parameters=_object({"path": _PATH, "content": {"type": "string", "description": "Full new file content"}},
                        ["path", "content"]),
-    # Идемпотентен: повтор с тем же content даёт то же итоговое состояние файла.
     effect="write", retryable=True, phases=frozenset({EXECUTION}),
 )
 DELETE_FILE = ToolSpec(
@@ -108,7 +103,6 @@ WORK_TOOL_NAMES = frozenset({"Bash", "list_files", "read_file", "write_file", "d
 
 
 def offered_tools(phase: str, has_tasks: bool) -> list[ToolSpec]:
-    """Какие инструменты показать модели. Это подсказка; разрешает или запрещает всё равно runtime."""
     if phase == PLANNING:
         return [LIST_FILES, READ_FILE, SUBMIT_PLAN]
     tools = [BASH, LIST_FILES, READ_FILE, WRITE_FILE, DELETE_FILE]
@@ -122,7 +116,6 @@ class ToolExecutor:
         self.executions: list[tuple[str, dict]] = []
 
     def execute(self, call: CheckedCall, policy: Policy, allowance: int) -> dict:
-        """allowance — доступный остаток result_bytes: инструмент не собирает вывод сверх него."""
         self.executions.append((call.tool, dict(call.args)))
         handlers = {
             "Bash": self._bash,
@@ -210,7 +203,6 @@ def _excluded(name: str, policy: Policy) -> bool:
 
 
 def _bash_env() -> dict:
-    """Минимальное окружение: секреты агента (OPENAI_API_KEY и т.п.) в дочерний процесс не попадают."""
     return {
         "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
         "HOME": os.environ.get("HOME", "/tmp"),
@@ -222,8 +214,6 @@ def _bash_env() -> dict:
 
 
 class _Capture(threading.Thread):
-    """Читает поток до конца, но хранит не больше cap байт."""
-
     def __init__(self, stream, cap: int):
         super().__init__(daemon=True)
         self.stream, self.cap = stream, cap
@@ -256,7 +246,6 @@ def _split(a: int, b: int, cap: int) -> tuple[int, int]:
 
 
 def run_bash(command: str, cwd: Path, timeout: float, cap: int) -> dict:
-    """Запускает уже проверенную простую команду через bash с таймаутом и лимитом вывода."""
     proc = subprocess.Popen(
         ["bash", "--noprofile", "--norc", "-c", command],
         cwd=str(cwd), env=_bash_env(), stdin=subprocess.DEVNULL,

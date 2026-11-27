@@ -1,4 +1,3 @@
-"""Мелкие утилиты: атомарная запись, хеши, усечение текста."""
 from __future__ import annotations
 
 import datetime as _dt
@@ -22,7 +21,6 @@ def canonical_json(obj) -> str:
 
 
 def dumps(obj) -> str:
-    """Сериализация результата инструмента в content сообщения role=tool."""
     return json.dumps(obj, ensure_ascii=False)
 
 
@@ -31,12 +29,10 @@ def utf8_len(text: str) -> int:
 
 
 def normalize_rel(path: str) -> str:
-    """'./a//b.py' -> 'a/b.py': для сравнения путей в проверках задач."""
     return posixpath.normpath(str(path).replace("\\", "/"))
 
 
 def atomic_write_bytes(path: Path, data: bytes) -> None:
-    """tmp-файл + fsync + os.replace: после сбоя на диске либо старая версия, либо новая."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
@@ -66,7 +62,6 @@ def _fsync_dir(directory: Path) -> None:
 
 
 def truncate_text(text: str, max_bytes: int) -> tuple[str, bool]:
-    """Обрезает текст до max_bytes байт UTF-8: оставляет начало и конец и явную пометку."""
     raw = text.encode("utf-8")
     if len(raw) <= max_bytes:
         return text, False

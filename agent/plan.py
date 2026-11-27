@@ -1,5 +1,3 @@
-"""Plan Mode и задачи: схема плана, его проверка, превращение шагов в задачи
-и проверка результата задачи самим runtime (а не по словам модели)."""
 from __future__ import annotations
 
 from agent import jsonschema
@@ -59,7 +57,6 @@ def manifest_digest(manifest: dict) -> str:
 
 
 def validate_plan(plan: dict, *, tool_names, engine, policy) -> list[str]:
-    """Ошибки плана: схема, id, зависимости (существуют, без циклов), инструменты, проверки."""
     problems = jsonschema.validate(plan, PLAN_SCHEMA)
     if problems:
         return problems
@@ -129,11 +126,6 @@ def tasks_from_plan(plan: dict) -> list[dict]:
 
 
 def verify_task(task: dict, *, calls: dict, journal, engine, policy) -> tuple[bool, list, list]:
-    """Проверяет результат задачи по фактическим данным runtime.
-
-    Источники подтверждения: журнал tool calls этой задачи, хеши файлов (снимок
-    дерева сейчас против базового снимка запуска) и содержимое файлов.
-    """
     current = journal.scan(policy)
     baseline = journal.baseline_manifest()
     task_calls = [r for r in calls.values() if r.get("task_id") == task["id"] and r["status"] == "completed"]
@@ -194,7 +186,6 @@ def describe_check(check: dict) -> str:
 
 
 def render_checklist(tasks: list[dict]) -> str:
-    """Задачи в формате чеклиста для stdout."""
     lines = []
     for task in tasks:
         box = "[x]" if task["status"] == "done" else "[ ]"

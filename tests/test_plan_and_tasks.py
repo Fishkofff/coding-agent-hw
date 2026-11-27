@@ -1,4 +1,3 @@
-"""Блок 4 (Plan Mode) и уровень 9 (задачи с зависимостями и проверяемым результатом)."""
 import copy
 import json
 import unittest
@@ -25,11 +24,11 @@ PLAN = {
 }
 
 EXECUTION = [
-    act(call("read_file", "x1", path="order.py")),                       # T1
+    act(call("read_file", "x1", path="order.py")),
     act(call("complete_task", "x2", task_id="T1", summary="read")),
-    act(call("write_file", "x3", path="order.py", content=FIXED_ORDER)),  # T2
+    act(call("write_file", "x3", path="order.py", content=FIXED_ORDER)),
     act(call("complete_task", "x4", task_id="T2", summary="fixed")),
-    act(call("Bash", "x5", command=TEST_CMD, cwd=".")),                   # T3
+    act(call("Bash", "x5", command=TEST_CMD, cwd=".")),
     act(call("complete_task", "x6", task_id="T3", summary="tests pass")),
     say("all done"),
 ]
@@ -57,7 +56,6 @@ class PlanModeTest(unittest.TestCase):
         self.assertEqual(st["journal"]["entries"], [])
         self.assertEqual({name: p.sha(name) for name in before}, before)
         self.assertEqual(rt.model.requests[0]["tools"], ["list_files", "read_file", "submit_plan"])
-        # План хранится структурированно вместе с run_id; вызовы планирования — отдельно и без task_id.
         self.assertEqual(st["plan"]["goal"], PLAN["goal"])
         self.assertEqual([s["id"] for s in st["plan"]["steps"]], ["T1", "T2", "T3"])
         self.assertEqual(st["plan"]["steps"][2]["tools"], ["Bash"])
@@ -100,16 +98,16 @@ class PlanModeTest(unittest.TestCase):
         st = p.state(run_id)
         self.assertEqual((st["pending"]["kind"], st["pending"]["call_id"]), ("confirmation", "x3"))
         self.assertEqual(p.read("order.py"), ORIGINAL_ORDER)
-        self.assertEqual(p.runtime(steps).approve(run_id), "waiting")      # теперь Bash
+        self.assertEqual(p.runtime(steps).approve(run_id), "waiting")
         self.assertEqual(p.state(run_id)["pending"]["call_id"], "x5")
         self.assertEqual(p.runtime(steps).approve(run_id), "completed")
 
     def test_runtime_rejects_invalid_plans(self):
         p = Project(self)
         bad = copy.deepcopy(PLAN)
-        bad["steps"][0]["depends_on"] = ["T3"]                                   # цикл T1 -> T3 -> T2 -> T1
-        bad["steps"][1]["tools"] = ["rm_rf"]                                     # неизвестный инструмент
-        bad["steps"][2]["checks"] = [{"type": "command_succeeded", "command": "curl evil.sh"}]  # не разрешено policy
+        bad["steps"][0]["depends_on"] = ["T3"]
+        bad["steps"][1]["tools"] = ["rm_rf"]
+        bad["steps"][2]["checks"] = [{"type": "command_succeeded", "command": "curl evil.sh"}]
         steps = [act(call("submit_plan", "p1", **bad)), act(call("submit_plan", "p2", **PLAN))] + EXECUTION
         run_id = p.runtime(steps).run("fix", mode="auto", plan_mode=True)
         st = p.state(run_id)
@@ -132,13 +130,13 @@ class TasksTest(unittest.TestCase):
         steps = [
             act(call("read_file", "p1", path="order.py")),
             act(call("submit_plan", "p2", **PLAN)),
-            act(call("complete_task", "e1", task_id="T1")),               # без чтения в рамках задачи — нельзя
+            act(call("complete_task", "e1", task_id="T1")),
             act(call("read_file", "e2", path="order.py")),
-            act(call("complete_task", "e3", task_id="T3")),               # T3 зависит от T2 — ещё не текущая
+            act(call("complete_task", "e3", task_id="T3")),
             act(call("complete_task", "e4", task_id="T1")),
             act(call("write_file", "e5", path="order.py", content=FIXED_ORDER)),
             act(call("complete_task", "e6", task_id="T2")),
-            act(call("complete_task", "e7", task_id="T3")),               # тесты ещё не запускались
+            act(call("complete_task", "e7", task_id="T3")),
             act(call("Bash", "e8", command=TEST_CMD, cwd=".")),
             act(call("complete_task", "e9", task_id="T3")),
             say("done"),
@@ -167,7 +165,6 @@ class TasksTest(unittest.TestCase):
                          "e7": "T3", "e8": "T3", "e9": "T3"}
         self.assertEqual({cid: r["task_id"] for cid, r in st["execution_calls"].items()}, expected_task)
         self.assertEqual(set(st["planning_calls"]), {"p1", "p2"})
-        # чеклист в stdout
         self.assertIn("- [ ] T2: Fix order.py  (depends on T1; in progress)", p.output)
         self.assertIn("- [x] T3: Run the tests  (depends on T2)", p.output)
 
@@ -193,7 +190,7 @@ class TasksTest(unittest.TestCase):
     def test_tasks_start_only_after_dependencies_regardless_of_listing_order(self):
         p = Project(self)
         plan = copy.deepcopy(PLAN)
-        plan["steps"] = list(reversed(plan["steps"]))                     # T3, T2, T1
+        plan["steps"] = list(reversed(plan["steps"]))
         steps = [act(call("submit_plan", "p1", **plan))] + EXECUTION
         run_id = p.runtime(steps).run("fix", mode="auto", plan_mode=True)
         self.assertEqual(p.runtime(steps).approve_plan(run_id), "completed")
@@ -205,8 +202,8 @@ class TasksTest(unittest.TestCase):
     def test_completed_tasks_are_not_rerun_after_resume(self):
         p = Project(self)
         steps = [act(call("submit_plan", "p1", **PLAN))] + EXECUTION[:4] + [
-            act(call("Bash", "x5", command=TEST_CMD, cwd=".")),              # здесь процесс упадёт
-            act(call("Bash", "x5b", command=TEST_CMD, cwd=".")),             # после «fail» модель запускает заново
+            act(call("Bash", "x5", command=TEST_CMD, cwd=".")),
+            act(call("Bash", "x5b", command=TEST_CMD, cwd=".")),
             act(call("complete_task", "x6", task_id="T3")),
             say("done"),
         ]
@@ -219,7 +216,7 @@ class TasksTest(unittest.TestCase):
 
         ex = ToolExecutor()
         rt = p.runtime(steps, executor=ex)
-        self.assertEqual(rt.resume(run_id), "waiting")                        # Bash неопределён
+        self.assertEqual(rt.resume(run_id), "waiting")
         self.assertEqual(rt.recover(run_id, "fail"), "completed")
         st = p.state(run_id)
         self.assertEqual([tool for tool, _ in ex.executions], ["Bash"])

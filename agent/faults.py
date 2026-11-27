@@ -1,13 +1,3 @@
-"""Управляемые точки отказа для тестов и демонстрации восстановления.
-
-  after_model_charge  — бюджет на запрос к модели списан и сохранён, ответа ещё нет;
-  after_tool_start    — «вызов начался» и списание сохранены, инструмент ещё не запущен;
-  after_tool_execute  — инструмент ВЫПОЛНЕН, результат ещё НЕ сохранён (главная точка);
-  after_result_save   — результат сохранён.
-
-Спецификация: "точка" или "точка:инструмент", например "after_tool_execute:write_file".
-В тестах бросается SimulatedCrash; в CLI (--crash-at) процесс по-настоящему умирает через os._exit.
-"""
 from __future__ import annotations
 
 import os
@@ -17,7 +7,7 @@ POINTS = ("after_model_charge", "after_tool_start", "after_tool_execute", "after
 
 
 class SimulatedCrash(BaseException):
-    """BaseException, чтобы сбой не перехватили обработчики ошибок инструментов."""
+    pass
 
 
 class Faults:

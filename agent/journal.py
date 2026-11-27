@@ -1,18 +1,3 @@
-"""Журнал изменений запуска и безопасный откат.
-
-Снимок дерева workspace = {относительный путь: sha256}; содержимое файлов лежит в blobs/.
-Список путей в снимке позволяет увидеть не только изменение, но и создание или удаление файлов.
-
-Перед каждым действием, которое может менять файлы (write_file, delete_file, Bash):
-  1. текущее дерево сверяется с последним известным состоянием (expected);
-     если оно отличается, действие останавливается с конфликтом;
-  2. сохраняется снимок «до».
-После действия сохраняются снимок «после», фактический diff и хеши.
-
-Для каждого затронутого запуском файла хранится before (до первого изменения этим запуском)
-и after (после последнего изменения). Откат восстанавливает before только для этих файлов,
-и только если текущий хеш каждого из них равен after; иначе это конфликт, и не пишется ничего.
-"""
 from __future__ import annotations
 
 import difflib
@@ -50,17 +35,15 @@ class Journal:
     @staticmethod
     def initial_state() -> dict:
         return {
-            "baseline": None,       # имя снимка на старте запуска
-            "expected": None,       # последнее известное агенту состояние дерева
-            "files": {},            # path -> {"before": sha|None, "after": sha|None, ...}
-            "entries": [],          # действия, восстановленные после сбоя, внешние изменения, откат
+            "baseline": None,
+            "expected": None,
+            "files": {},
+            "entries": [],
             "snapshot_count": 0,
             "rolled_back": None,
         }
 
     def scan(self, policy: Policy) -> dict:
-        """Текущее дерево (только зона агента: разрешённые и не запрещённые директории,
-        без симлинков и явно исключённых генерируемых файлов). Содержимое -> blobs."""
         manifest = {}
         for dirpath, dirnames, filenames in os.walk(policy.workspace, followlinks=False):
             here = Path(dirpath)
@@ -112,7 +95,6 @@ class Journal:
         return changes
 
     def detect_drift(self, policy: Policy) -> tuple[list[dict], dict]:
-        """Изменения дерева относительно последнего известного состояния (посторонние правки)."""
         current = self.scan(policy)
         return self.compare(self.data["expected"], current), current
 
@@ -122,13 +104,6 @@ class Journal:
 
     def record(self, policy: Policy, *, kind: str, pre_snapshot: str | None, call_id=None, attempt=None,
                task_id=None, tool=None, note=None) -> dict:
-        """Фиксирует фактический результат: снимок «после», diff, хеши.
-
-        kind: action    — действие агента;
-              recovered — изменения неопределённого после сбоя вызова, отнесённые пользователем к запуску;
-              external  — посторонние изменения, принятые пользователем (не относятся к запуску);
-              rollback  — откат.
-        """
         pre = self.load_snapshot(pre_snapshot) if pre_snapshot else self.data["expected"]
         post = self.scan(policy)
         changes = self.compare(pre, post)

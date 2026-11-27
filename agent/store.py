@@ -1,12 +1,3 @@
-"""Хранилище запусков: .agent_runs/<run_id>/
-
-  state.json      — полное состояние запуска (сообщения, tool calls, решения, бюджет, план,
-                    задачи, журнал). Пишется атомарно: tmp + fsync + os.replace.
-  blobs/<sha256>  — содержимое файлов для снимков журнала (content-addressed).
-  snapshots/*.json— снимки дерева workspace: путь -> sha256.
-  events.jsonl    — человекочитаемый аудит-лог (источник истины — state.json).
-  lock            — flock: один процесс на запуск; после падения процесса блокировка снимается ОС.
-"""
 from __future__ import annotations
 
 import datetime as _dt
@@ -89,12 +80,6 @@ class RunStore:
         line = json.dumps({"at": now_iso(), "event": event_name, **data}, ensure_ascii=False, default=str)
         with open(self.run_dir(run_id) / "events.jsonl", "a", encoding="utf-8") as fh:
             fh.write(line + "\n")
-
-    def read_events(self, run_id: str) -> list[dict]:
-        path = self.run_dir(run_id) / "events.jsonl"
-        if not path.exists():
-            return []
-        return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
     @contextmanager
     def lock(self, run_id: str):

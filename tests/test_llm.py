@@ -1,4 +1,3 @@
-"""HTTP-клиент OpenAI-compatible API против локального фейкового сервера (без сети и LLM)."""
 import json
 import threading
 import unittest
@@ -20,8 +19,6 @@ def completion(content="", tool_calls=None):
 
 
 class FakeServer:
-    """Отдаёт заранее заданные ответы chat/completions и запоминает запросы."""
-
     def __init__(self, responses):
         self.responses = list(responses)
         self.requests = []
@@ -88,7 +85,7 @@ class OpenAICompatibleClientTest(unittest.TestCase):
         self.assertEqual([(m["role"], m["tool_call_id"]) for m in second[-2:]],
                          [("tool", "call_a"), ("tool", "call_b")])
         assistant = [m for m in server.requests[2]["body"]["messages"] if m["role"] == "assistant"]
-        self.assertEqual(assistant[-1]["content"], "fixing")      # <think> вырезан
+        self.assertEqual(assistant[-1]["content"], "fixing")
 
     def test_http_error_interrupts_run_and_resume_continues(self):
         server = self.serve([(400, {"error": "bad request"}), (200, completion("ok"))])

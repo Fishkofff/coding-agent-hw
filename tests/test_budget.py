@@ -1,9 +1,8 @@
-"""Уровень 8: единый бюджет запуска, устойчивый к сбоям."""
 import unittest
 
 from agent.faults import SimulatedCrash
 from agent.tools import ToolExecutor
-from tests.helpers import FIXED_ORDER, TEST_CMD, Project, act, call, say, tool_results
+from tests.helpers import FIXED_ORDER, Project, act, call, say, tool_results
 
 BIG = {"model_calls": 50, "tool_calls": 100, "side_effects": 50, "result_bytes": 500000}
 
@@ -35,7 +34,7 @@ class BudgetLimitsTest(unittest.TestCase):
         run_id = p.runtime(steps, executor=ex).run("t", mode="auto", plan_mode=False)
         st = p.state(run_id)
         results = tool_results(st)
-        self.assertEqual(len(ex.executions), 2)                 # из второй пачки (2 > 1 остатка) — ни одного
+        self.assertEqual(len(ex.executions), 2)
         self.assertEqual(results["r3"]["error"], "budget_exceeded")
         self.assertEqual(results["r4"]["error"], "budget_exceeded")
         self.assertEqual(st["budget"]["used"]["tool_calls"], 2)
@@ -44,9 +43,9 @@ class BudgetLimitsTest(unittest.TestCase):
         p = Project(self, budget=budget(side_effects=1))
         ex = ToolExecutor()
         steps = [act(call("write_file", "w1", path="a.txt", content="a"),
-                     call("write_file", "w2", path="b.txt", content="b")),   # 2 побочных эффекта > 1: пачка целиком отклонена
-                 act(call("write_file", "w3", path="a.txt", content="a")),   # помещается
-                 act(call("write_file", "w4", path="b.txt", content="b")),   # лимит исчерпан
+                     call("write_file", "w2", path="b.txt", content="b")),
+                 act(call("write_file", "w3", path="a.txt", content="a")),
+                 act(call("write_file", "w4", path="b.txt", content="b")),
                  say("done")]
         run_id = p.runtime(steps, executor=ex).run("t", mode="auto", plan_mode=False)
         st = p.state(run_id)
@@ -70,7 +69,7 @@ class BudgetLimitsTest(unittest.TestCase):
         self.assertTrue(results["r1"]["truncated"])
         self.assertIn("truncated", results["r1"]["content"])
         self.assertLessEqual(st["budget"]["used"]["result_bytes"], 600)
-        self.assertEqual(results["r2"]["error"], "budget_exceeded")   # остаток меньше минимума — не запускается
+        self.assertEqual(results["r2"]["error"], "budget_exceeded")
         self.assertEqual(len(ex.executions), 1)
 
     def test_bash_receives_only_the_remaining_result_budget(self):
@@ -97,7 +96,7 @@ class BudgetPersistenceTest(unittest.TestCase):
         used_planning = dict(p.state(run_id)["budget"]["used"])
         self.assertEqual((used_planning["model_calls"], used_planning["tool_calls"]), (2, 2))
 
-        p.runtime(steps).approve_plan(run_id)                 # другой экземпляр runtime
+        p.runtime(steps).approve_plan(run_id)
         used_after_plan = dict(p.state(run_id)["budget"]["used"])
         self.assertEqual(used_after_plan["model_calls"], 3)
         self.assertEqual(used_after_plan["tool_calls"], 3)
@@ -118,14 +117,14 @@ class BudgetPersistenceTest(unittest.TestCase):
         run_id = rt.state["run_id"]
         used = p.state(run_id)["budget"]["used"]
         self.assertEqual((used["model_calls"], used["tool_calls"], used["side_effects"]), (1, 1, 1))
-        self.assertEqual(used["result_bytes"], 0)              # результат не сохранён — не доставлен модели
+        self.assertEqual(used["result_bytes"], 0)
 
         rt = p.runtime(steps)
         rt.resume(run_id)
-        self.assertEqual(p.state(run_id)["budget"]["used"]["side_effects"], 1)   # resume не обнуляет
+        self.assertEqual(p.state(run_id)["budget"]["used"]["side_effects"], 1)
         rt.recover(run_id, "retry", changes="attribute")
         used = p.state(run_id)["budget"]["used"]
-        self.assertEqual((used["tool_calls"], used["side_effects"]), (2, 2))     # повтор — новая попытка, новое списание
+        self.assertEqual((used["tool_calls"], used["side_effects"]), (2, 2))
 
     def test_crash_after_model_call_was_charged(self):
         p = Project(self)
@@ -136,7 +135,7 @@ class BudgetPersistenceTest(unittest.TestCase):
         run_id = rt.state["run_id"]
         self.assertEqual(p.state(run_id)["budget"]["used"]["model_calls"], 1)
         self.assertEqual(p.runtime(steps).resume(run_id), "completed")
-        self.assertEqual(p.state(run_id)["budget"]["used"]["model_calls"], 3)   # потерянный запрос не возвращён
+        self.assertEqual(p.state(run_id)["budget"]["used"]["model_calls"], 3)
 
     def test_retry_is_refused_when_budget_is_exhausted(self):
         p = Project(self, budget=budget(side_effects=1))

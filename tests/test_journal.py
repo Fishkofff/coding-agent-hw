@@ -1,4 +1,3 @@
-"""Уровень 10: журнал изменений по run_id и безопасный откат."""
 import unittest
 
 from agent.faults import SimulatedCrash
@@ -18,7 +17,7 @@ class JournalAndRollbackTest(unittest.TestCase):
         p = Project(self)
         run_id = p.runtime(FIX_STEPS).run("fix", mode="auto", plan_mode=False)
 
-        report = p.runtime([]).diff_report(run_id)            # «после перезапуска»: новый экземпляр
+        report = p.runtime([]).diff_report(run_id)
         self.assertEqual([f["path"] for f in report["files"]], ["order.py"])
         change = report["files"][0]
         self.assertEqual(change["op"], "modified")
@@ -30,7 +29,7 @@ class JournalAndRollbackTest(unittest.TestCase):
         kinds = [(e["kind"], e["tool"], [c["path"] for c in e["changes"]]) for e in report["entries"]]
         self.assertEqual(kinds, [("action", "write_file", ["order.py"]), ("action", "Bash", [])])
 
-        (p.ws / "notes.txt").write_text("my own file")         # посторонний файл, не относится к запуску
+        (p.ws / "notes.txt").write_text("my own file")
         result = p.runtime([]).rollback(run_id)
         self.assertEqual(result["restored"], ["order.py"])
         self.assertEqual(p.read("order.py"), ORIGINAL_ORDER)
@@ -52,7 +51,7 @@ class JournalAndRollbackTest(unittest.TestCase):
         with self.assertRaises(RollbackConflict) as ctx:
             p.runtime([]).rollback(run_id)
         self.assertEqual([pr["path"] for pr in ctx.exception.problems], ["order.py"])
-        self.assertEqual(p.read("order.py"), external)         # ни один файл не перезаписан
+        self.assertEqual(p.read("order.py"), external)
         self.assertTrue((p.ws / "helper.py").exists())
         self.assertEqual(p.state(run_id)["status"], "completed")
 
@@ -62,7 +61,7 @@ class JournalAndRollbackTest(unittest.TestCase):
                      call("delete_file", "d1", path="old.txt")),
                  say("done")]
         run_id = p.runtime(steps).run("t", mode="auto", plan_mode=False)
-        p.runtime(steps).approve(run_id)                       # удаление требует подтверждения и в auto
+        p.runtime(steps).approve(run_id)
         files = {f["path"]: f for f in p.runtime([]).diff_report(run_id)["files"]}
         self.assertEqual((files["pkg/new.py"]["op"], files["pkg/new.py"]["before"]), ("created", None))
         self.assertEqual((files["old.txt"]["op"], files["old.txt"]["after"]), ("deleted", None))
@@ -84,7 +83,7 @@ class JournalAndRollbackTest(unittest.TestCase):
     def test_external_change_before_an_action_is_a_conflict(self):
         p = Project(self)
         ex = ToolExecutor()
-        run_id = p.runtime(FIX_STEPS).run("fix", mode="safe", plan_mode=False)   # ждёт подтверждения write_file
+        run_id = p.runtime(FIX_STEPS).run("fix", mode="safe", plan_mode=False)
         (p.ws / "test_order.py").write_text(ORIGINAL_TEST + "# human edit\n")
         rt = p.runtime(FIX_STEPS, executor=ex)
         self.assertEqual(rt.approve(run_id), "waiting")
@@ -96,7 +95,7 @@ class JournalAndRollbackTest(unittest.TestCase):
         with self.assertRaisesRegex(UserError, "only --changes external"):
             rt.recover(run_id, "retry", changes="attribute")
 
-        self.assertEqual(rt.recover(run_id, "retry", changes="external"), "waiting")   # дальше Bash ждёт подтверждения
+        self.assertEqual(rt.recover(run_id, "retry", changes="external"), "waiting")
         self.assertEqual(p.read("order.py"), FIXED_ORDER)
         files = [f["path"] for f in p.runtime([]).diff_report(run_id)["files"]]
         self.assertEqual(files, ["order.py"], "an external change is not attributed to the run")
@@ -114,15 +113,15 @@ class JournalAndRollbackTest(unittest.TestCase):
         run_id = rt.state["run_id"]
 
         with self.assertRaisesRegex(UserError, "uncertain"):
-            p.runtime(steps).rollback(run_id)                  # сразу после сбоя
+            p.runtime(steps).rollback(run_id)
         self.assertEqual(p.read("order.py"), FIXED_ORDER)
         self.assertEqual(p.runtime([]).diff_report(run_id)["unresolved_calls"], ["w1"])
 
         rt = p.runtime(steps)
-        rt.resume(run_id)                                       # пользователь видит изменения
+        rt.resume(run_id)
         with self.assertRaisesRegex(UserError, "uncertain"):
             rt.rollback(run_id)
-        rt.recover(run_id, "fail", changes="attribute")        # изменения — этого запуска
+        rt.recover(run_id, "fail", changes="attribute")
         report = p.runtime([]).diff_report(run_id)
         self.assertEqual([e["kind"] for e in report["entries"]], ["recovered"])
         p.runtime([]).rollback(run_id)
@@ -133,7 +132,7 @@ class JournalAndRollbackTest(unittest.TestCase):
         run_id = p.runtime(FIX_STEPS).run("fix", mode="safe", plan_mode=False)
         (p.ws / "__pycache__").mkdir()
         (p.ws / "__pycache__" / "order.cpython-310.pyc").write_bytes(b"\x00bytecode")
-        self.assertEqual(p.runtime(FIX_STEPS).approve(run_id), "waiting")   # не конфликт: исключено policy
+        self.assertEqual(p.runtime(FIX_STEPS).approve(run_id), "waiting")
         self.assertEqual(p.state(run_id)["pending"]["kind"], "confirmation")
 
     def test_second_rollback_is_refused(self):

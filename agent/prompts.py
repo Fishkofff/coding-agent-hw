@@ -1,4 +1,3 @@
-"""Тексты, которые видит модель (на английском: так надёжнее работают небольшие модели)."""
 from __future__ import annotations
 
 from agent.plan import describe_check

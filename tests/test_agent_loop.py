@@ -1,4 +1,3 @@
-"""Блок 1: agent loop, tool calling, Bash, ошибки инструментов."""
 import time
 import unittest
 
@@ -31,9 +30,7 @@ class AgentLoopTest(unittest.TestCase):
         self.assertIn("OK", bash["result"]["stderr"])
         self.assertEqual(p.read("order.py"), FIXED_ORDER)
         self.assertEqual(p.sha("test_order.py"), test_sha, "test_order.py must stay unchanged")
-        # Каждый tool call получил ответ role=tool с исходным tool_call_id, в исходном порядке.
         self.assertEqual([cid for cid, _ in tool_messages(st)], ["c1", "c2", "c3", "c4", "c5"])
-        # Два вызова из одного ответа модели лежат в одном assistant-сообщении.
         multi = [m for m in st["messages"] if m["role"] == "assistant" and len(m.get("tool_calls", [])) == 2]
         self.assertEqual([c["id"] for c in multi[0]["tool_calls"]], ["c2", "c3"])
 
@@ -59,9 +56,9 @@ class AgentLoopTest(unittest.TestCase):
         rt = p.runtime([
             act(call("read_file", "e1", path="missing.py"),
                 call("no_such_tool", "e2", x=1),
-                call("write_file", "e3", path="order.py"),            # нет обязательного content
+                call("write_file", "e3", path="order.py"),
                 ToolCallRequest("e4", "read_file", "{not json"),
-                call("read_file", "e5", path="order.py", extra=1)),   # лишнее поле
+                call("read_file", "e5", path="order.py", extra=1)),
             after_errors,
             say("done"),
         ])

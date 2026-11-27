@@ -23,7 +23,8 @@ MAX_NUDGES = 3
 
 
 class UserError(Exception):
-    ""
+    pass
+
 
 def fingerprint(name: str, arguments_raw: str) -> str:
     try:
@@ -596,14 +597,6 @@ class AgentRuntime:
         return self.drive()
 
     def recover(self, run_id: str, action: str, changes: str | None = None) -> str:
-        """Решение пользователя по неопределённому после сбоя вызову (recovery) или по конфликту дерева.
-
-        action:  retry — повторить (новая попытка того же tool call; только для повторяемых инструментов);
-                 fail  — считать шаг неуспешным и продолжить;
-                 abort — завершить запуск с ошибкой.
-        changes: attribute — обнаруженные изменения сделаны этим запуском (попадут в журнал и откат);
-                 external  — изменения посторонние (в журнал запуска не попадают).
-        """
         if action not in ("retry", "fail", "abort"):
             raise UserError("action must be retry, fail or abort")
         if changes not in (None, "attribute", "external"):

@@ -1,4 +1,3 @@
-"""Общие помощники тестов: временная копия контрольного проекта и детерминированная модель."""
 from __future__ import annotations
 
 import hashlib
@@ -46,13 +45,10 @@ def tool_messages(state: dict) -> list[tuple[str, dict]]:
 
 
 def tool_results(state: dict) -> dict:
-    """tool_call_id -> результат, который увидела модель (последний, если id повторялся)."""
     return dict(tool_messages(state))
 
 
 class Project:
-    """Временная копия контрольного проекта: <tmp>/workspace, <tmp>/policy.json, <tmp>/runs."""
-
     def __init__(self, testcase, *, allow=None, deny=None, dirs_allow=None, dirs_deny=None,
                  budget=None, bash=None, files=None, extra_files=None):
         self.root = Path(os.path.realpath(tempfile.mkdtemp(prefix="agent-test-")))
@@ -85,7 +81,6 @@ class Project:
         self.policy_path.write_text(json.dumps(self.policy, indent=2), encoding="utf-8")
 
     def runtime(self, steps, *, crash_at: str | None = None, executor=None) -> AgentRuntime:
-        """Новый экземпляр runtime = «новый процесс»: всё состояние читается с диска."""
         model = steps if isinstance(steps, ScriptedModel) else ScriptedModel(steps)
         return AgentRuntime(self.policy_path, model, reporter=Reporter(self.out), faults=Faults(crash_at),
                             executor=executor)

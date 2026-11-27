@@ -1,4 +1,3 @@
-"""Блок 3: восстановление после сбоя, неопределённые вызовы, повтор tool_call_id."""
 import unittest
 
 from agent.faults import SimulatedCrash
@@ -13,7 +12,6 @@ FIX_STEPS = [act(call("write_file", "w1", path="order.py", content=FIXED_ORDER))
 
 
 def crash(testcase, project, steps, point, **run_kwargs):
-    """Запуск падает в управляемой точке; возвращает run_id. Состояние в памяти теряется, на диске — остаётся."""
     rt = project.runtime(steps, crash_at=point)
     with testcase.assertRaises(SimulatedCrash):
         rt.run("fix", **{"mode": "auto", "plan_mode": False, **run_kwargs})
@@ -26,12 +24,12 @@ class CrashRecoveryTest(unittest.TestCase):
         run_id = crash(self, p, FIX_STEPS, "after_tool_execute:write_file")
         st = p.state(run_id)
         record = st["execution_calls"]["w1"]
-        self.assertEqual(record["status"], "started")          # на диске: «началось», результата нет
+        self.assertEqual(record["status"], "started")
         self.assertIsNone(record["result"])
-        self.assertEqual(p.read("order.py"), FIXED_ORDER)      # но действие успело выполниться
+        self.assertEqual(p.read("order.py"), FIXED_ORDER)
 
         ex = ToolExecutor()
-        rt = p.runtime(FIX_STEPS, executor=ex)                 # перезапуск
+        rt = p.runtime(FIX_STEPS, executor=ex)
         self.assertEqual(rt.resume(run_id), "waiting")
         st = p.state(run_id)
         self.assertEqual(st["pending"]["kind"], "recovery")
@@ -47,7 +45,7 @@ class CrashRecoveryTest(unittest.TestCase):
         ex = ToolExecutor()
         rt = p.runtime(FIX_STEPS, executor=ex)
         rt.resume(run_id)
-        with self.assertRaisesRegex(UserError, "--changes"):    # обнаружены изменения — решить, чьи они
+        with self.assertRaisesRegex(UserError, "--changes"):
             rt.recover(run_id, "retry")
         self.assertEqual(rt.recover(run_id, "retry", changes="attribute"), "completed")
         record = p.state(run_id)["execution_calls"]["w1"]
@@ -80,14 +78,14 @@ class CrashRecoveryTest(unittest.TestCase):
         rt.resume(run_id)
         with self.assertRaisesRegex(UserError, "not safely retryable"):
             rt.recover(run_id, "retry")
-        self.assertEqual(rt.recover(run_id, "fail"), "completed")   # тесты не меняют файлы -> --changes не нужен
+        self.assertEqual(rt.recover(run_id, "fail"), "completed")
 
     def test_completed_calls_are_not_repeated_after_restart(self):
         p = Project(self)
         steps = [act(call("write_file", "w1", path="new1.txt", content="1"),
                      call("write_file", "w2", path="new2.txt", content="2")),
                  say("done")]
-        run_id = crash(self, p, steps, "after_result_save:write_file")   # упали после сохранения w1
+        run_id = crash(self, p, steps, "after_result_save:write_file")
         st = p.state(run_id)
         self.assertEqual(st["execution_calls"]["w1"]["status"], "completed")
         self.assertEqual(st["execution_calls"]["w2"]["status"], "new")
@@ -121,7 +119,7 @@ class ToolCallIdempotencyTest(unittest.TestCase):
     def test_repeated_tool_call_id_returns_stored_result_without_reexecution(self):
         p = Project(self)
         steps = [act(call("write_file", "w1", path="order.py", content=FIXED_ORDER)),
-                 act(call("write_file", "w1", path="order.py", content=FIXED_ORDER)),   # тот же id и аргументы
+                 act(call("write_file", "w1", path="order.py", content=FIXED_ORDER)),
                  say("done")]
         ex = ToolExecutor()
         run_id = p.runtime(steps, executor=ex).run("t", mode="auto", plan_mode=False)

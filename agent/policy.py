@@ -1,10 +1,3 @@
-"""Policy и проверки безопасности. Модуль не зависит от agent loop.
-
-Любой tool call — недоверенный ввод: модель только предлагает действие. Перед КАЖДЫМ
-исполнением runtime заново читает policy-файл и проверяет канонические пути, разрешённые
-и запрещённые директории, команду целиком и её аргументы, рабочую директорию и режим.
-Запрет сильнее разрешения; всё, что явно не разрешено, отклоняется.
-"""
 from __future__ import annotations
 
 import json
@@ -25,15 +18,15 @@ DEFAULT_JOURNAL_EXCLUDE = ("__pycache__", "*.pyc", ".pytest_cache", ".DS_Store")
 
 
 class PolicyError(Exception):
-    """Policy-файл некорректен — агент не запускается."""
+    pass
 
 
 class PolicyViolation(Exception):
-    """Действие запрещено policy."""
+    pass
 
 
 class ArgumentProblem(Exception):
-    """Policy не против, но действие невыполнимо: файла нет, это каталог и т.п."""
+    pass
 
 
 def is_within(path: Path, base: Path) -> bool:
@@ -122,8 +115,6 @@ class Policy:
 
 @dataclass(frozen=True)
 class CheckedCall:
-    """Вызов, прошедший проверки policy: пути уже канонизированы."""
-
     tool: str
     args: dict
     path: Path | None = None
@@ -192,7 +183,6 @@ def load_policy(path) -> Policy:
 
 
 def _check_exclude_pattern(pattern: str, workspace: Path) -> None:
-    """Исключения журнала не должны прятать исходники и тесты контрольного проекта."""
     if "/" in pattern or pattern.strip("*. ") == "":
         raise PolicyError(f"journal.exclude pattern {pattern!r} is too broad (use a file or directory name)")
     for probe in ("order.py", "test_order.py", "module.py", "test_module.py"):
@@ -208,12 +198,6 @@ def _check_exclude_pattern(pattern: str, workspace: Path) -> None:
 
 
 def approval_requirement(effect: str, mode: str, phase: str) -> str:
-    """Матрица режимов. auto — исполнить сразу, confirm — нужен ответ пользователя, forbidden — нельзя.
-
-    safe: чтение сразу; запись и Bash после подтверждения; удаление после подтверждения.
-    auto: чтение сразу; запись и Bash сразу (если прошли policy); удаление после подтверждения.
-    plan mode (фаза planning): только чтение.
-    """
     if mode not in MODES:
         raise ValueError(f"unknown mode {mode!r}")
     if effect in ("read", "control"):
@@ -233,8 +217,6 @@ def _contains_sequence(tokens: tuple, rule: tuple) -> bool:
 
 
 class PolicyEngine:
-    """Проверки путей, команд и аргументов. Policy перечитывается при каждой проверке."""
-
     def __init__(self, policy_path):
         self.policy_path = Path(policy_path)
 
@@ -242,7 +224,6 @@ class PolicyEngine:
         return load_policy(self.policy_path)
 
     def resolve_path(self, policy: Policy, rel) -> Path:
-        """Относительный путь агента -> канонический путь внутри разрешённой директории."""
         if not isinstance(rel, str) or not rel.strip():
             raise PolicyViolation("path must be a non-empty string")
         if "\x00" in rel:
@@ -271,7 +252,6 @@ class PolicyEngine:
             raise PolicyViolation(f"{shown!r} is not inside an allowed directory")
 
     def check_command(self, policy: Policy, command, cwd) -> tuple[tuple, Path]:
-        """Команда целиком, её аргументы и рабочая директория."""
         if not isinstance(command, str) or not command.strip():
             raise PolicyViolation("command is empty")
         if any(ord(ch) < 32 or ord(ch) == 127 for ch in command):

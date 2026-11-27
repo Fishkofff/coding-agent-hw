@@ -1,4 +1,3 @@
-"""Блок 2: policy, режимы safe/auto, подтверждения."""
 import json
 import unittest
 
@@ -26,18 +25,18 @@ class PolicyEngineTest(unittest.TestCase):
 
     def test_denied_commands(self):
         cases = [
-            "rm -rf /",                                   # deny
-            "python3 -m unittest -v | cat",               # конвейер
-            "python3 -m unittest -v; rm order.py",        # цепочка
+            "rm -rf /",
+            "python3 -m unittest -v | cat",
+            "python3 -m unittest -v; rm order.py",
             "python3 -m unittest -v && ls",
-            "ls $(pwd)", "ls `pwd`",                      # подстановки
-            "ls > out.txt", "ls < order.py",              # перенаправления
-            "bash -c ls", "bash -c 'rm -rf /'",           # вложенный shell
-            "FOO=1 ls",                                   # переменные окружения
-            "ls\nrm order.py",                            # перевод строки
-            "ls *", "ls ~",                               # глоб, домашний каталог
-            "cat order.py",                               # не в allowlist
-            "python3 -m unittest",                        # не точное совпадение с разрешённой строкой
+            "ls $(pwd)", "ls `pwd`",
+            "ls > out.txt", "ls < order.py",
+            "bash -c ls", "bash -c 'rm -rf /'",
+            "FOO=1 ls",
+            "ls\nrm order.py",
+            "ls *", "ls ~",
+            "cat order.py",
+            "python3 -m unittest",
         ]
         for command in cases:
             with self.subTest(command=command), self.assertRaises(PolicyViolation):
@@ -62,7 +61,7 @@ class PolicyEngineTest(unittest.TestCase):
         for tool, args in cases:
             with self.subTest(tool=tool), self.assertRaisesRegex(PolicyViolation, "denied directory"):
                 self.engine.check_call(self.policy, tool, args)
-        self.engine.check_call(self.policy, "read_file", {"path": "sub/notes.txt"})   # соседний каталог разрешён
+        self.engine.check_call(self.policy, "read_file", {"path": "sub/notes.txt"})
 
     def test_list_files_hides_denied_directory_content(self):
         checked = self.engine.check_call(self.policy, "list_files", {"path": "."})
@@ -147,13 +146,13 @@ class ModesAndConfirmationsTest(unittest.TestCase):
         run_id = p.runtime(steps).run("fix", mode="safe", plan_mode=False)
         st = p.state(run_id)
         self.assertEqual((st["status"], st["pending"]["kind"], st["pending"]["call_id"]), ("waiting", "confirmation", "w1"))
-        self.assertEqual(st["execution_calls"]["r1"]["status"], "completed")    # чтение — сразу
-        self.assertEqual(p.read("order.py"), ORIGINAL_ORDER)                     # запись — ждёт
+        self.assertEqual(st["execution_calls"]["r1"]["status"], "completed")
+        self.assertEqual(p.read("order.py"), ORIGINAL_ORDER)
 
-        p.runtime(steps).approve(run_id)                  # новый экземпляр runtime = новый процесс
+        p.runtime(steps).approve(run_id)
         st = p.state(run_id)
         self.assertEqual(p.read("order.py"), FIXED_ORDER)
-        self.assertEqual(st["pending"]["call_id"], "b1")  # Bash в safe тоже ждёт подтверждения
+        self.assertEqual(st["pending"]["call_id"], "b1")
 
         p.runtime(steps).approve(run_id)
         st = p.state(run_id)
@@ -215,7 +214,7 @@ class ModesAndConfirmationsTest(unittest.TestCase):
         p = Project(self)
         steps = [act(call("Bash", "b1", command=TEST_CMD, cwd=".")), say("ok")]
         run_id = p.runtime(steps).run("t", mode="safe", plan_mode=False)
-        p.policy["commands"]["deny"].append("unittest")      # policy поменяли, пока ждали подтверждения
+        p.policy["commands"]["deny"].append("unittest")
         p.write_policy()
         ex = ToolExecutor()
         p.runtime(steps, executor=ex).approve(run_id)

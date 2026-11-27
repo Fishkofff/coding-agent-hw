@@ -1,9 +1,3 @@
-"""Единый бюджет запуска.
-
-Счётчики живут внутри state.json запуска, поэтому проверка лимита, списание и статус
-действия попадают на диск одной атомарной записью. resume, утверждение плана и повтор
-после сбоя ничего не обнуляют: счётчики просто читаются из того же state.json.
-"""
 from __future__ import annotations
 
 from agent.util import dumps, truncate_text, utf8_len
@@ -17,8 +11,6 @@ TEXT_FIELDS = ("stdout", "stderr", "content", "entries", "message")
 
 
 class Budget:
-    """Обёртка над state["budget"] = {"limits": {...}, "used": {...}}."""
-
     def __init__(self, data: dict):
         self.data = data
 
@@ -39,7 +31,6 @@ class Budget:
         return max(0, self.limit(key) - self.used(key))
 
     def shortfall(self, **need: int) -> list[str]:
-        """Каких лимитов не хватает для действия (пустой список — хватает всех)."""
         problems = []
         for key, amount in need.items():
             if amount and amount > self.remaining(key):
@@ -56,12 +47,6 @@ class Budget:
 
 
 def fit_result(data: dict, limit: int) -> tuple[dict, int]:
-    """Подгоняет результат инструмента под остаток result_bytes.
-
-    Размер результата — байты UTF-8 строки, которая уйдёт модели в сообщении role=tool.
-    Если не помещается, обрезаются текстовые поля, а результат помечается
-    truncated=true и truncated_reason="result_bytes budget".
-    """
     size = utf8_len(dumps(data))
     if size <= limit:
         return data, size

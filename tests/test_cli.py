@@ -1,4 +1,3 @@
-"""Сквозные тесты CLI: отдельные процессы, настоящий сбой процесса (os._exit) и продолжение по run_id."""
 import os
 import re
 import subprocess
@@ -37,7 +36,7 @@ class CliTest(unittest.TestCase):
 
     def test_plan_mode_with_confirmations_across_processes(self):
         scripted = str(ROOT / "demo" / "scripted_plan.json")
-        out = self.cli("run", "Исправь расчёт", "--scripted", scripted)          # safe + plan mode по умолчанию
+        out = self.cli("run", "Исправь расчёт", "--scripted", scripted)
         run_id = self.run_id(out)
         self.assertIn("waiting (plan_approval)", out)
         self.assertIn("План v1", self.cli("plan", "show", run_id))

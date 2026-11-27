@@ -1,4 +1,3 @@
-"""CLI агента: python3 -m agent <команда>. Список команд: python3 -m agent --help."""
 from __future__ import annotations
 
 import argparse
@@ -20,7 +19,6 @@ from agent.tools import EXECUTION, PLANNING, REGISTRY
 
 
 def load_dotenv(path: Path) -> None:
-    """Простой загрузчик .env (без зависимостей). Уже заданные переменные окружения не перезаписываются."""
     if not path.is_file():
         return
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -69,7 +67,6 @@ def parse_budget(text: str | None) -> dict:
 
 
 def interactive(runtime: AgentRuntime, run_id: str, status: str) -> str:
-    """-i: подтверждения прямо в консоли. Состояние уже сохранено, так что можно и прервать процесс."""
     while status == "waiting":
         kind = runtime.state["pending"]["kind"]
         try:
@@ -254,7 +251,6 @@ def cmd_rollback(args) -> int:
 
 
 def cmd_policy_check(args) -> int:
-    """Показать решение policy для одного вызова без модели: удобно на защите."""
     engine = PolicyEngine(args.policy)
     policy = engine.load()
     spec = REGISTRY.get(args.tool)
